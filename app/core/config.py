@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "apd-violations"
 
+    # Penyimpanan file video unggahan (lokal)
+    upload_dir: str = "storage/uploads"
+    upload_expire_days: int = 30
+    max_upload_mb: int = 500
+
     class Config:
         env_file = ".env"
 

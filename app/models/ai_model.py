@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -11,24 +11,31 @@ class AIModel(Base):
     __tablename__ = "ai_models"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    environment_id = Column(UUID(as_uuid=True), ForeignKey("environments.id"), nullable=False)
     name = Column(String, nullable=False)
     version = Column(String, nullable=False)
     weights_path = Column(String, nullable=False)     # path ke file .pt / .onnx
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    environment = relationship("Environment", back_populates="ai_models")
+
 
 class ApdClass(Base):
     __tablename__ = "apd_classes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False)              # misal: "Helm", "Rompi"
+    name = Column(String, nullable=False)                    # misal: "Helm", "Rompi"
+    label_key = Column(String, unique=True, nullable=False)  # label kelas dari model, misal: "helmet"
     description = Column(String, nullable=True)
 
 
 class EnvironmentApdClass(Base):
     """Nentuin APD apa aja yang wajib di satu environment tertentu."""
     __tablename__ = "environment_apd_classes"
+    __table_args__ = (
+        UniqueConstraint("environment_id", "apd_class_id", name="uq_environment_apd_class"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     environment_id = Column(UUID(as_uuid=True), ForeignKey("environments.id"), nullable=False)
