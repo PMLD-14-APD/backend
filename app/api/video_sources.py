@@ -14,6 +14,7 @@ from app.models.environment import Environment, Location
 from app.models.user import User
 from app.models.video_source import VideoSource
 from app.schemas.video_source import StreamSourceCreate, VideoSourceOut, VideoSourceUpdate
+from app.services.inference.manager import inference_manager
 from app.services.stream_manager import stream_manager
 from app.storage import local
 
@@ -152,6 +153,7 @@ def delete_source(source_id: uuid.UUID, db: Session = Depends(get_db),
         AnalysisSession.source_id == src.id, AnalysisSession.status == "processing"
     ).all()
     for s in running:
+        inference_manager.stop(s.id)
         stream_manager.stop(str(s.id))
     file_path, name = src.file_path, src.name
     log_activity(db, current_user.id, "source.delete", "video_source", src.id, name)

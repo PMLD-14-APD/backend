@@ -18,6 +18,7 @@ class StreamWorker(threading.Thread):
         self.on_frame = on_frame
 
         self.latest_frame = None
+        self.frame_seq = 0 
         self.lock = threading.Lock()
         self.running = True
         self.connected = False
@@ -48,6 +49,7 @@ class StreamWorker(threading.Thread):
             if now - last_grab >= self.interval:
                 with self.lock:
                     self.latest_frame = frame
+                    self.frame_seq += 1
                 last_grab = now
 
                 if self.on_frame:
@@ -59,6 +61,11 @@ class StreamWorker(threading.Thread):
     def get_frame(self):
         with self.lock:
             return self.latest_frame.copy() if self.latest_frame is not None else None
+
+    def get_latest(self):
+        """Return (seq, frame) terbaru; frame None kalau belum ada."""
+        with self.lock:
+            return self.frame_seq, (self.latest_frame.copy() if self.latest_frame is not None else None)
 
     def stop(self):
         self.running = False

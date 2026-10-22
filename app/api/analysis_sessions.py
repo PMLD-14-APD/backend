@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.video_source import VideoSource
 from app.schemas.analysis import ComplianceStatOut, SessionCreate, SessionOut, SessionStatus
 from app.services.analysis import finalize_session
+from app.services.inference.manager import inference_manager
 from app.services.stream_manager import stream_manager
 from app.api.video_sources import get_source_for_user
 
@@ -49,9 +50,8 @@ def list_sessions(
 
 @router.get("/stream-status/live")
 def live_stream_status(current_user: User = Depends(get_current_user)):
-    """Stream CCTV mana yang lagi jalan & connected (real-time, bukan dari DB)."""
-    return stream_manager.status()
-
+    """Stream CCTV & proses inferensi yang lagi jalan (real-time, bukan dari DB)."""
+    return {"streams": stream_manager.status(), "inference": inference_manager.status()}
 
 @router.get("/{session_id}", response_model=SessionOut)
 def get_session(session_id: uuid.UUID, db: Session = Depends(get_db),
@@ -120,7 +120,8 @@ def start_session(session_id: uuid.UUID, db: Session = Depends(get_db),
 
     if source.source_type == "cctv_stream":
         stream_manager.start(str(session.id), source.stream_url, source.target_fps)
-    # video_upload: proses inferensi file diambil oleh worker AI (belum ada di repo ini)
+    # inferensi jalan di background (file: selesai sendiri; CCTV: sampai di-stop)
+    inference_manager.start(session.id)
     db.refresh(session)
     return session
 
@@ -132,7 +133,12 @@ def stop_session(session_id: uuid.UUID, db: Session = Depends(get_db),
     if session.status != "processing":
         raise HTTPException(status_code=409, detail="Hanya sesi 'processing' yang bisa dihentikan")
 
+    inference_manager.stop(session.id)          # tunggu hasil terakhir ditulis ke DB
     stream_manager.stop(str(session.id))
+    db.refresh(session)
+    if session.status != "processing":          # sudah ditutup runner (selesai/gagal) saat kita menunggu
+        return session
+        
     source = db.get(VideoSource, session.source_id)
     if source.source_type == "cctv_stream":
         source.status = "inactive"
