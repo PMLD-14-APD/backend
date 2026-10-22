@@ -18,3 +18,5 @@ coverage/
 .DS_Store
 venv/
 .venv/ 
+storage/uploads/*
+!storage/uploads/.gitkeep

@@ -10,18 +10,25 @@ class Location(Base):
     __tablename__ = "locations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False)
+    name = Column(String, unique=True, nullable=False)
     address = Column(String, nullable=True)
 
-    cameras = relationship("Camera", back_populates="location")
+    # FK video_sources.location_id = ON DELETE SET NULL (dikerjakan database)
+    video_sources = relationship("VideoSource", back_populates="location", passive_deletes=True)
 
 
 class Environment(Base):
     __tablename__ = "environments"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String, nullable=False)          # misal: "Konstruksi"
+    name = Column(String, unique=True, nullable=False)   # misal: "Konstruksi"
     description = Column(String, nullable=True)
 
-    cameras = relationship("Camera", back_populates="environment")
-    apd_requirements = relationship("EnvironmentApdClass", back_populates="environment")
+    video_sources = relationship("VideoSource", back_populates="environment")
+    apd_requirements = relationship(
+        "EnvironmentApdClass",
+        back_populates="environment",
+        cascade="all, delete-orphan",
+    )
+    # 1 environment : banyak model AI (1 model hanya milik 1 environment)
+    ai_models = relationship("AIModel", back_populates="environment")
