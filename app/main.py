@@ -47,8 +47,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # --- Shutdown ---
+    inference_manager.stop_all()  
     stream_manager.stop_all()
-    inference_manager.stop_all()
     print("[shutdown] semua stream & proses inferensi dihentikan")
 
 
