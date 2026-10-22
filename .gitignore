@@ -16,5 +16,3 @@ dist/
 build/
 coverage/
 .DS_Store
-venv/
-.venv/ 
