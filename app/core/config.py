@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     upload_expire_days: int = 30
     max_upload_mb: int = 500
 
+    # Inferensi AI
+    models_dir: str = "storage/models"        # folder bobot model (weights_path relatif ke sini)
+    snapshot_dir: str = "storage/snapshots"   # foto bukti pelanggaran (sementara lokal, belum MinIO)
+    person_label: str = "person"              # nama kelas orang di keluaran model
+    inference_conf: float = 0.4               # ambang confidence deteksi
+    confirm_frames: int = 3                   # status baru dianggap sah setelah N frame berturut-turut
+    violation_cooldown_seconds: int = 30      # jeda minimal pencatatan ulang pelanggaran orang yang sama
+    stats_flush_seconds: int = 10             # seberapa sering hasil ditulis ke DB
     class Config:
         env_file = ".env"
 

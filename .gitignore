@@ -20,3 +20,7 @@ venv/
 .venv/ 
 storage/uploads/*
 !storage/uploads/.gitkeep
+storage/snapshots/*
+!storage/snapshots/.gitkeep
+storage/models/*
+!storage/models/.gitkeep

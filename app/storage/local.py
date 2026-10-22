@@ -60,3 +60,15 @@ def purge_expired_uploads(db: Session) -> int:
         db.delete(src)
     db.commit()
     return len(expired)
+    
+def save_snapshot(session_id, frame, box, caption: str) -> str:
+    """Simpan foto bukti (frame + kotak orang) dan return URL relatif untuk disimpan di image_url."""
+    folder = Path(settings.snapshot_dir) / str(session_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    img = frame.copy()
+    x1, y1, x2, y2 = (int(v) for v in box)
+    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+    cv2.putText(img, caption, (x1, max(15, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+    name = f"{uuid.uuid4().hex}.jpg"
+    cv2.imwrite(str(folder / name), img)
+    return f"/snapshots/{session_id}/{name}"
