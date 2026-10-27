@@ -3,7 +3,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "postgresql://postgres:postgres@localhost:5432/apd_detection"
-
+    # Dashboard: zona waktu untuk pengelompokan harian/jam
+    dashboard_timezone: str = "Asia/Jakarta"
+   
     # JWT auth
     secret_key: str = "ganti-ini-di-env-jangan-dipakai-buat-production"
     algorithm: str = "HS256"
