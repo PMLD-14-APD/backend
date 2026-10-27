@@ -12,7 +12,7 @@ from app.models.video_source import VideoSource
 from app.services.inference.manager import inference_manager
 from app.services.stream_manager import stream_manager
 from app.storage.local import purge_expired_uploads
-from app.api import analysis_sessions, auth, detection_logs, master_data, users, video_sources
+from app.api import analysis_sessions, auth, dashboard, detection_logs, master_data, users, video_sources
 
 # import semua model biar SQLAlchemy tau semua tabel (dipakai alembic & relationship)
 from app.models import user, activity_log, environment, ai_model, video_source, analysis  # noqa: F401
@@ -67,7 +67,7 @@ app.include_router(master_data.ai_models_router)
 app.include_router(video_sources.router)
 app.include_router(analysis_sessions.router)
 app.include_router(detection_logs.router)
-
+app.include_router(dashboard.router)
 
 @app.get("/")
 def root():
