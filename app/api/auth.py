@@ -11,7 +11,7 @@ from app.core.security import (
 )
 from app.models.activity_log import log_activity
 from app.models.user import User
-from app.schemas.auth import UserRegister, UserOut, Token
+from app.schemas.auth import PasswordChange, UserRegister, UserOut, Token
 
 router = APIRouter()
 
@@ -74,3 +74,20 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 def get_me(current_user: User = Depends(get_current_user)):
     """Endpoint buat tes: kalau ini berhasil, berarti token kamu valid."""
     return current_user
+
+@router.patch("/me/password")
+def change_my_password(
+    payload: PasswordChange,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Ganti password akun sendiri (wajib mengisi password lama)."""
+    # 400 (bukan 401) supaya frontend tidak mengira token habis lalu logout otomatis
+    if not verify_password(payload.old_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Password lama salah")
+    if payload.old_password == payload.new_password:
+        raise HTTPException(status_code=400, detail="Password baru harus berbeda dari password lama")
+    current_user.password_hash = hash_password(payload.new_password)
+    log_activity(db, current_user.id, "user.change_password", "user", current_user.id, current_user.username)
+    db.commit()
+    return {"message": "Password berhasil diubah"}

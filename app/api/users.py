@@ -2,15 +2,18 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.history import like_pattern
 from app.core.database import get_db
 from app.core.security import hash_password, require_admin
 from app.models.activity_log import log_activity
 from app.models.user import User
 from app.schemas.auth import UserOut
-from app.schemas.user import RejectRequest, UserCreate, UserRole, UserStatus
+from app.schemas.user import RejectRequest, UserCreate, UserRole, UserStatus, UserUpdate
 
 router = APIRouter()
 
@@ -44,20 +47,30 @@ def _transition(db: Session, admin: User, user: User, allowed_from: set, new_sta
 
 @router.get("/", response_model=list[UserOut])
 def list_users(
+    response: Response,
+    q: Optional[str] = Query(None, description="Cari berdasarkan nama atau username"),
     status_filter: Optional[UserStatus] = Query(None, alias="status"),
     role: Optional[UserRole] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Daftar user. Tanpa filter status, user 'deleted' tidak ikut ditampilkan."""
-    q = db.query(User)
+    """Daftar user. Tanpa filter status, user 'deleted' tidak ikut ditampilkan.
+    Jumlah seluruh data yang cocok filter ada di header X-Total-Count."""
+    query = db.query(User)
     if status_filter:
-        q = q.filter(User.status == status_filter)
+        query = query.filter(User.status == status_filter)
     else:
-        q = q.filter(User.status != "deleted")
+        query = query.filter(User.status != "deleted")
     if role:
-        q = q.filter(User.role == role)
-    return q.order_by(User.created_at.desc()).all()
+        query = query.filter(User.role == role)
+    if q and q.strip():
+        pattern = like_pattern(q)
+        query = query.filter(or_(User.name.ilike(pattern, escape="\\"),
+                                 User.username.ilike(pattern, escape="\\")))
+    response.headers["X-Total-Count"] = str(query.count())
+    return query.order_by(User.created_at.desc(), User.id).offset(offset).limit(limit).all()
 
 
 @router.post("/", response_model=UserOut, status_code=201)
@@ -149,3 +162,56 @@ def delete_user(
     return _transition(
         db, admin, user, {"pending", "active", "rejected", "inactive"}, "deleted", "user.delete"
     )
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: uuid.UUID,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Edit nama, username, peran, atau reset password. Hanya field yang dikirim yang diubah."""
+    user = _get_target(db, user_id)
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=422, detail="Tidak ada data yang diubah")
+    for key, value in data.items():
+        if value is None:
+            raise HTTPException(status_code=422, detail=f"Field '{key}' tidak boleh null")
+
+    changed: list[str] = []
+
+    if "name" in data and data["name"] != user.name:
+        user.name = data["name"]
+        changed.append("name")
+
+    if "username" in data and data["username"] != user.username:
+        taken = db.query(User.id).filter(User.username == data["username"], User.id != user.id).first()
+        if taken:
+            raise HTTPException(status_code=400, detail="Username sudah dipakai")
+        changed.append(f"username ({user.username} -> {data['username']})")
+        user.username = data["username"]
+
+    if "role" in data and data["role"] != user.role:
+        # admin yang sedang login pasti aktif; larangan ini menjamin selalu tersisa minimal satu admin
+        if user.id == admin.id and data["role"] != "admin":
+            raise HTTPException(status_code=400, detail="Tidak bisa menurunkan peran akun sendiri")
+        user.role = data["role"]
+        changed.append("role")
+
+    if "password" in data:
+        user.password_hash = hash_password(data["password"])
+        changed.append("password")
+
+    if not changed:
+        return user   # tidak ada perubahan nyata, tidak perlu dicatat
+
+    log_activity(db, admin.id, "user.update", "user", user.id, f"{user.username} | diubah: {', '.join(changed)}")
+    try:
+        db.commit()
+    except IntegrityError:     # balapan: username diambil request lain di antara cek dan commit
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Username sudah dipakai")
+    db.refresh(user)
+    return user
