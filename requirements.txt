@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
+alembic
 psycopg[binary]
 pydantic-settings
 pydantic[email]
@@ -10,3 +11,5 @@ python-jose[cryptography]
 passlib
 bcrypt==4.0.1
 python-multipart
+ultralytics
+tzdata
