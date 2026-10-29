@@ -32,6 +32,4 @@ class Settings(BaseSettings):
     stats_flush_seconds: int = 10             # seberapa sering hasil ditulis ke DB
     class Config:
         env_file = ".env"
-
-
 settings = Settings()
