@@ -41,7 +41,10 @@ class AnalysisSession(Base):
 class ComplianceStat(Base):
     """Rangkuman kepatuhan per jam untuk satu sesi."""
     __tablename__ = "compliance_stats"
-    __table_args__ = (Index("ix_compliance_stats_session_bucket", "session_id", "bucket_start"),)
+    __table_args__ = (
+        Index("ix_compliance_stats_session_bucket", "session_id", "bucket_start"),
+        Index("ix_compliance_stats_bucket_start", "bucket_start"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False)
