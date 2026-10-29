@@ -57,8 +57,10 @@ class ComplianceStat(Base):
 class DetectionLog(Base):
     """Satu pelanggaran (orang yang APD-nya kurang lengkap / tidak dipakai) pada satu frame."""
     __tablename__ = "detection_logs"
-    __table_args__ = (Index("ix_detection_logs_session_detected", "session_id", "detected_at"),)
-
+    __table_args__ = (
+        Index("ix_detection_logs_session_detected", "session_id", "detected_at"),
+        Index("ix_detection_logs_detected_at", "detected_at"),      
+    )
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_id = Column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False)
     track_id = Column(Integer, nullable=True)
