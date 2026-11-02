@@ -1,3 +1,5 @@
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -17,6 +19,41 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
+# ----------------------------------------------------------------------
+# Denylist token (logout)
+# ----------------------------------------------------------------------
+# JWT itu stateless, jadi "logout" = mencatat jti token ke daftar tolak sampai token itu kedaluwarsa.
+# Disimpan di memori proses: cocok dengan desain MVP (satu worker uvicorn, manager inferensi juga
+# di memori). Konsekuensi: daftar ini hilang kalau server restart, dan tidak dibagi antar worker.
+# Kalau nanti perlu tahan restart / multi-worker, pindahkan ke tabel DB atau Redis (fungsi di
+# bawah ini satu-satunya tempat yang perlu diubah).
+_revoked: dict[str, float] = {}      # jti -> waktu kedaluwarsa token (epoch detik)
+_revoked_lock = threading.Lock()
+
+
+def revoke_token(jti: str, exp: float) -> None:
+    """Tandai token sebagai sudah logout. Entri yang tokennya sudah kedaluwarsa dibuang sekalian."""
+    now = time.time()
+    with _revoked_lock:
+        for key in [k for k, v in _revoked.items() if v <= now]:
+            del _revoked[key]
+        _revoked[jti] = float(exp)
+
+
+def is_revoked(jti: str | None) -> bool:
+    if not jti:
+        return False
+    with _revoked_lock:
+        exp = _revoked.get(jti)
+        if exp is None:
+            return False
+        if exp <= time.time():
+            del _revoked[jti]
+            return False
+        return True
+
+
+# ----------------------------------------------------------------------
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
@@ -28,29 +65,42 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "jti": uuid.uuid4().hex})
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """Dependency: pasang ini di endpoint yang wajib login."""
-    credentials_exception = HTTPException(
+def _credentials_exception() -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token tidak valid atau expired",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def get_token_payload(token: str = Depends(oauth2_scheme)) -> dict:
+    """Dependency: decode token dan pastikan belum logout. Return payload (sub, exp, jti)."""
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+    except JWTError:
+        raise _credentials_exception()
+    if is_revoked(payload.get("jti")):
+        raise _credentials_exception()
+    return payload
+
+
+def get_current_user(payload: dict = Depends(get_token_payload), db: Session = Depends(get_db)) -> User:
+    """Dependency: pasang ini di endpoint yang wajib login."""
+    try:
         sub = payload.get("sub")
         if sub is None:
-            raise credentials_exception
+            raise _credentials_exception()
         user_id = uuid.UUID(sub)
-    except (JWTError, ValueError):
-        raise credentials_exception
+    except ValueError:
+        raise _credentials_exception()
 
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
-        raise credentials_exception
+        raise _credentials_exception()
 
     # user yang sudah dinonaktifkan/dihapus/ditolak tokennya langsung tidak berlaku
     if user.status != "active":

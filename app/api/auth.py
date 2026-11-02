@@ -1,17 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import (
-    hash_password,
-    verify_password,
     create_access_token,
     get_current_user,
+    get_token_payload,
+    hash_password,
+    revoke_token,
+    verify_password,
 )
 from app.models.activity_log import log_activity
 from app.models.user import User
-from app.schemas.auth import PasswordChange, UserRegister, UserOut, Token
+from app.schemas.auth import UserRegister, UserOut, Token
 
 router = APIRouter()
 
@@ -70,24 +72,23 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    token_payload: dict = Depends(get_token_payload),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Akhiri sesi: token yang dipakai request ini langsung tidak berlaku lagi.
+    Frontend tetap harus menghapus token dari penyimpanan klien setelah memanggil ini."""
+    jti = token_payload.get("jti")
+    if jti:   # token lama (sebelum ada jti) tidak bisa dicabut, hanya habis sendiri
+        revoke_token(jti, token_payload["exp"])
+    log_activity(db, current_user.id, "auth.logout", "user", current_user.id, current_user.username)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
     """Endpoint buat tes: kalau ini berhasil, berarti token kamu valid."""
     return current_user
-
-@router.patch("/me/password")
-def change_my_password(
-    payload: PasswordChange,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Ganti password akun sendiri (wajib mengisi password lama)."""
-    # 400 (bukan 401) supaya frontend tidak mengira token habis lalu logout otomatis
-    if not verify_password(payload.old_password, current_user.password_hash):
-        raise HTTPException(status_code=400, detail="Password lama salah")
-    if payload.old_password == payload.new_password:
-        raise HTTPException(status_code=400, detail="Password baru harus berbeda dari password lama")
-    current_user.password_hash = hash_password(payload.new_password)
-    log_activity(db, current_user.id, "user.change_password", "user", current_user.id, current_user.username)
-    db.commit()
-    return {"message": "Password berhasil diubah"}
