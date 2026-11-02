@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import (
-    hash_password,
-    verify_password,
     create_access_token,
     get_current_user,
+    get_token_payload,
+    hash_password,
+    revoke_token,
+    verify_password,
 )
 from app.models.activity_log import log_activity
 from app.models.user import User
@@ -68,6 +70,22 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    token_payload: dict = Depends(get_token_payload),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Akhiri sesi: token yang dipakai request ini langsung tidak berlaku lagi.
+    Frontend tetap harus menghapus token dari penyimpanan klien setelah memanggil ini."""
+    jti = token_payload.get("jti")
+    if jti:   # token lama (sebelum ada jti) tidak bisa dicabut, hanya habis sendiri
+        revoke_token(jti, token_payload["exp"])
+    log_activity(db, current_user.id, "auth.logout", "user", current_user.id, current_user.username)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserOut)
