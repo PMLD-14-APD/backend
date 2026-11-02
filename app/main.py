@@ -12,9 +12,10 @@ from app.models.video_source import VideoSource
 from app.services.inference.manager import inference_manager
 from app.services.stream_manager import stream_manager
 from app.storage.local import purge_expired_uploads
-from app.api import activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, master_data, users, video_sources
+from app.api import (
+    activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, master_data, users, video_sources,
+)
 
-# import semua model biar SQLAlchemy tau semua tabel (dipakai alembic & relationship)
 from app.models import user, activity_log, environment, ai_model, video_source, analysis  # noqa: F401
 
 
@@ -60,6 +61,7 @@ app.mount("/snapshots", StaticFiles(directory=settings.snapshot_dir), name="snap
 
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/users", tags=["Users (Admin)"])
+app.include_router(activity_logs.router)
 app.include_router(master_data.locations_router)
 app.include_router(master_data.environments_router)
 app.include_router(master_data.apd_classes_router)
@@ -69,7 +71,6 @@ app.include_router(analysis_sessions.router)
 app.include_router(detection_logs.router)
 app.include_router(dashboard.router)
 app.include_router(history.router)
-app.include_router(activity_logs.router)
 
 
 @app.get("/")
