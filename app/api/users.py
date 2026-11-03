@@ -1,18 +1,22 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import hash_password, require_admin
 from app.models.activity_log import log_activity
 from app.models.user import User
-from app.schemas.auth import UserOut
-from app.schemas.user import RejectRequest, UserCreate, UserRole, UserStatus
+from app.schemas.user import RejectRequest, UserCreate, UserOut, UserPage, UserRole, UserStatus, UserUpdate
+from app.services.history import escape_like
+from app.services.users import leaves_no_active_admin
 
 router = APIRouter()
+
+SortOrder = Literal["desc", "asc"]
 
 
 def _get_target(db: Session, user_id: uuid.UUID) -> User:
@@ -25,6 +29,28 @@ def _get_target(db: Session, user_id: uuid.UUID) -> User:
 def _forbid_self(admin: User, target: User) -> None:
     if admin.id == target.id:
         raise HTTPException(status_code=400, detail="Tidak bisa melakukan aksi ini ke akun sendiri")
+
+
+def _guard_last_admin(db: Session, target: User) -> None:
+    """Tolak aksi yang membuat sistem tidak punya admin aktif lagi.
+
+    Baris semua admin aktif dikunci (FOR UPDATE) sampai transaksi selesai, jadi dua admin yang
+    saling menonaktifkan di saat bersamaan tetap tidak bisa lolos berdua."""
+    if target.role != "admin" or target.status != "active":
+        return
+    active_admin_ids = [
+        row.id
+        for row in db.query(User.id)
+        .filter(User.role == "admin", User.status == "active")
+        .order_by(User.id)
+        .with_for_update()
+        .all()
+    ]
+    if leaves_no_active_admin(active_admin_ids, target.id):
+        raise HTTPException(
+            status_code=400,
+            detail="Ini satu-satunya admin aktif. Jadikan user lain admin dulu sebelum melanjutkan",
+        )
 
 
 def _transition(db: Session, admin: User, user: User, allowed_from: set, new_status: str,
@@ -42,14 +68,18 @@ def _transition(db: Session, admin: User, user: User, allowed_from: set, new_sta
     return user
 
 
-@router.get("/", response_model=list[UserOut])
+@router.get("/", response_model=UserPage)
 def list_users(
+    search: Optional[str] = Query(None, description="Cari nama atau username"),
     status_filter: Optional[UserStatus] = Query(None, alias="status"),
     role: Optional[UserRole] = None,
+    sort_order: SortOrder = "desc",
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Daftar user. Tanpa filter status, user 'deleted' tidak ikut ditampilkan."""
+    """Daftar user (urut berdasarkan waktu dibuat). Tanpa filter status, user 'deleted' tidak ikut ditampilkan."""
     q = db.query(User)
     if status_filter:
         q = q.filter(User.status == status_filter)
@@ -57,7 +87,17 @@ def list_users(
         q = q.filter(User.status != "deleted")
     if role:
         q = q.filter(User.role == role)
-    return q.order_by(User.created_at.desc()).all()
+    if search and search.strip():
+        like = f"%{escape_like(search.strip())}%"
+        q = q.filter(User.name.ilike(like, escape="\\") | User.username.ilike(like, escape="\\"))
+
+    total = q.count()
+    if sort_order == "desc":
+        q = q.order_by(User.created_at.desc(), User.id.desc())
+    else:
+        q = q.order_by(User.created_at.asc(), User.id.asc())
+    items = q.offset(offset).limit(limit).all()
+    return UserPage(total=total, limit=limit, offset=offset, items=items)
 
 
 @router.post("/", response_model=UserOut, status_code=201)
@@ -83,6 +123,65 @@ def create_user(
     db.flush()
     log_activity(db, admin.id, "user.create", "user", user.id, user.username)
     db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.get("/{user_id}", response_model=UserOut)
+def get_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    return _get_target(db, user_id)
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: uuid.UUID,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Ubah nama, username, role, atau reset password. Hanya field yang dikirim yang diproses."""
+    user = _get_target(db, user_id)
+    data = payload.model_dump(exclude_unset=True, exclude={"confirm_password"})
+    if not data:
+        raise HTTPException(status_code=400, detail="Tidak ada data yang diubah")
+
+    changed: list[str] = []
+
+    if "name" in data and data["name"] != user.name:
+        user.name = data["name"]
+        changed.append("name")
+
+    if "username" in data and data["username"] != user.username:
+        taken = db.query(User.id).filter(User.username == data["username"], User.id != user.id).first()
+        if taken:
+            raise HTTPException(status_code=400, detail="Username sudah dipakai")
+        changed.append(f"username ({user.username} -> {data['username']})")
+        user.username = data["username"]
+
+    if "role" in data and data["role"] != user.role:
+        _forbid_self(admin, user)   # admin tidak boleh mengubah role-nya sendiri
+        if user.role == "admin":    # turun dari admin ke user
+            _guard_last_admin(db, user)
+        changed.append(f"role ({user.role} -> {data['role']})")
+        user.role = data["role"]
+
+    if "password" in data:
+        user.password_hash = hash_password(data["password"])
+        changed.append("password")  # isi password tidak pernah masuk log
+
+    if not changed:
+        return user
+
+    log_activity(db, admin.id, "user.update", "user", user.id, f"{user.username} | diubah: {', '.join(changed)}")
+    try:
+        db.commit()
+    except IntegrityError:   # dua request ganti username yang sama bersamaan
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Username sudah dipakai")
     db.refresh(user)
     return user
 
@@ -124,6 +223,7 @@ def deactivate_user(
 ):
     user = _get_target(db, user_id)
     _forbid_self(admin, user)
+    _guard_last_admin(db, user)
     return _transition(db, admin, user, {"active"}, "inactive", "user.deactivate")
 
 
@@ -146,6 +246,7 @@ def delete_user(
     """Soft delete: status jadi 'deleted', barisnya tetap ada supaya riwayat tidak putus."""
     user = _get_target(db, user_id)
     _forbid_self(admin, user)
+    _guard_last_admin(db, user)
     return _transition(
         db, admin, user, {"pending", "active", "rejected", "inactive"}, "deleted", "user.delete"
     )

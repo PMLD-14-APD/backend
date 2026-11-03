@@ -2,7 +2,9 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+
+from app.storage.snapshots import snapshot_api_url
 
 
 class Period(BaseModel):
@@ -105,8 +107,13 @@ class RecentViolation(BaseModel):
     compliance_status: str
     violation_type: str
     confidence: float
-    image_url: Optional[str]
+    image_url: Optional[str]          # endpoint ber-auth: GET /detection-logs/{id}/image
     detected_at: datetime
+
+    @model_validator(mode="after")
+    def _foto_lewat_endpoint(self):
+        self.image_url = snapshot_api_url(self.id, self.image_url)
+        return self
 
 
 class ActiveSession(BaseModel):

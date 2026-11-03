@@ -2,7 +2,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
+
+from app.storage.snapshots import snapshot_api_url
 
 from app.schemas.analysis import ComplianceStatus, SessionStatus
 
@@ -58,9 +60,14 @@ class ViolationHistoryItem(BaseModel):
     frame_number: int
     video_timestamp: float
     bbox: Any
-    image_url: Optional[str]
+    image_url: Optional[str]          # endpoint ber-auth: GET /detection-logs/{id}/image
     detected_at: datetime
     items: list[ViolationApdItem]
+
+    @model_validator(mode="after")
+    def _foto_lewat_endpoint(self):
+        self.image_url = snapshot_api_url(self.id, self.image_url)
+        return self
 
 
 class ViolationHistoryPage(BaseModel):
