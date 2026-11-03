@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     # Dashboard: zona waktu untuk pengelompokan harian/jam
     dashboard_timezone: str = "Asia/Jakarta"
    
+    # CORS: daftar origin frontend yang boleh memanggil API, pisahkan dengan koma.
+    # Contoh produksi: CORS_ORIGINS=https://simovis.example.com. "*" = semua origin (hanya untuk dev).
+    cors_origins: str = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173"
+
     # JWT auth
     secret_key: str = "ganti-ini-di-env-jangan-dipakai-buat-production"
     algorithm: str = "HS256"
@@ -44,4 +48,15 @@ class Settings(BaseSettings):
     stats_flush_seconds: int = 10             # seberapa sering hasil ditulis ke DB
     class Config:
         env_file = ".env"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return parse_origins(self.cors_origins)
+
+
+def parse_origins(raw: str) -> list[str]:
+    """'a, b/ ,' -> ['a', 'b']. Spasi dan garis miring di ujung dibuang (origin tidak pernah diakhiri '/')."""
+    return [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+
+
 settings = Settings()

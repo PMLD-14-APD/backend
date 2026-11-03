@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 
@@ -88,6 +89,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="APD Detection API", lifespan=lifespan)
+
+# CORS: frontend di origin/port lain (mis. Vite :5173) boleh memanggil API ini.
+# Autentikasi memakai header Authorization (bukan cookie), jadi allow_credentials dimatikan.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
 
 # foto bukti disimpan di folder ini, tapi TIDAK dilayani sebagai file statis:
 # klien mengambilnya lewat GET /detection-logs/{id}/image yang wajib login
