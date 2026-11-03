@@ -2,14 +2,16 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_allow_query_token
 from app.models.analysis import AnalysisSession, DetectionLog
 from app.models.user import User
 from app.models.video_source import VideoSource
 from app.schemas.analysis import ComplianceStatus, DetectionLogOut
+from app.storage.snapshots import snapshot_file
 
 router = APIRouter(prefix="/detection-logs", tags=["Detection Logs"])
 
@@ -49,3 +51,18 @@ def get_detection_log(log_id: int, db: Session = Depends(get_db),
     if log is None:
         raise HTTPException(status_code=404, detail="Log deteksi tidak ditemukan")
     return log
+
+
+@router.get("/{log_id}/image")
+def get_detection_log_image(
+    log_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_allow_query_token),
+):
+    """Foto bukti pelanggaran (JPEG). Wajib login; user biasa hanya boleh melihat foto dari sumber miliknya.
+    Bisa dipanggil dengan header Authorization, atau ?token=<access_token> untuk tag <img>."""
+    log = _scoped(db, current_user).filter(DetectionLog.id == log_id).first()
+    path = snapshot_file(log.image_url) if log else None
+    if log is None or path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="Foto bukti tidak ditemukan")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
