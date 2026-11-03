@@ -2,8 +2,9 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -17,6 +18,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # tokenUrl ini cuma buat dokumentasi /docs, biar Swagger tau harus panggil endpoint mana buat login
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+# versi yang tidak langsung 401 kalau header Authorization kosong (dipakai endpoint yang juga menerima ?token=)
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 
 # ----------------------------------------------------------------------
@@ -62,11 +65,27 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_access_token(data: dict) -> str:
+def create_access_token(data: dict, auth_time: Optional[float] = None) -> str:
+    """Buat JWT. `auth_time` = waktu login awal (epoch detik); dibawa terus saat refresh supaya
+    total umur sesi bisa dibatasi (SESSION_MAX_MINUTES)."""
+    now = datetime.now(timezone.utc)
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
-    to_encode.update({"exp": expire, "jti": uuid.uuid4().hex})
+    to_encode.update({
+        "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
+        "jti": uuid.uuid4().hex,
+        "auth_time": int(auth_time if auth_time is not None else now.timestamp()),
+    })
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
+
+
+def session_age_exceeded(payload: dict, now: Optional[float] = None) -> bool:
+    """True kalau login awal sudah lebih lama dari SESSION_MAX_MINUTES (wajib login ulang).
+    Token lama tanpa `auth_time` dianggap belum melewati batas."""
+    auth_time = payload.get("auth_time")
+    if auth_time is None:
+        return False
+    now = time.time() if now is None else now
+    return now - float(auth_time) > settings.session_max_minutes * 60
 
 
 def _credentials_exception() -> HTTPException:
@@ -77,8 +96,7 @@ def _credentials_exception() -> HTTPException:
     )
 
 
-def get_token_payload(token: str = Depends(oauth2_scheme)) -> dict:
-    """Dependency: decode token dan pastikan belum logout. Return payload (sub, exp, jti)."""
+def _decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
     except JWTError:
@@ -88,8 +106,7 @@ def get_token_payload(token: str = Depends(oauth2_scheme)) -> dict:
     return payload
 
 
-def get_current_user(payload: dict = Depends(get_token_payload), db: Session = Depends(get_db)) -> User:
-    """Dependency: pasang ini di endpoint yang wajib login."""
+def _load_active_user(payload: dict, db: Session) -> User:
     try:
         sub = payload.get("sub")
         if sub is None:
@@ -109,6 +126,29 @@ def get_current_user(payload: dict = Depends(get_token_payload), db: Session = D
             detail="Akun tidak aktif",
         )
     return user
+
+
+def get_token_payload(token: str = Depends(oauth2_scheme)) -> dict:
+    """Dependency: decode token dan pastikan belum logout. Return payload (sub, exp, jti, auth_time)."""
+    return _decode_token(token)
+
+
+def get_current_user(payload: dict = Depends(get_token_payload), db: Session = Depends(get_db)) -> User:
+    """Dependency: pasang ini di endpoint yang wajib login."""
+    return _load_active_user(payload, db)
+
+
+def get_current_user_allow_query_token(
+    header_token: Optional[str] = Depends(oauth2_scheme_optional),
+    token: Optional[str] = Query(None, description="Alternatif header Authorization, untuk tag <img> yang tidak bisa mengirim header"),
+    db: Session = Depends(get_db),
+) -> User:
+    """Sama seperti get_current_user, tapi boleh juga lewat ?token=. HANYA dipakai di endpoint
+    yang dibuka langsung oleh browser (foto bukti); token di URL bisa tercatat di log server/proxy."""
+    raw = header_token or token
+    if not raw:
+        raise _credentials_exception()
+    return _load_active_user(_decode_token(raw), db)
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
