@@ -2,6 +2,8 @@ import threading
 import time
 import cv2
 
+from app.services.stream_url import mask_stream_url
+
 
 class StreamWorker(threading.Thread):
     """Satu thread per sesi analisis CCTV. Nyimpen frame TERBARU aja (bukan antrean),
@@ -28,12 +30,12 @@ class StreamWorker(threading.Thread):
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         if not cap.isOpened():
-            print(f"[stream:{self.session_id}] GAGAL connect ke {self.stream_url}")
+            print(f"[stream:{self.session_id}] GAGAL connect ke {mask_stream_url(self.stream_url)}")
             self.running = False
             return
 
         self.connected = True
-        print(f"[stream:{self.session_id}] Terhubung: {self.stream_url}")
+        print(f"[stream:{self.session_id}] Terhubung: {mask_stream_url(self.stream_url)}")
 
         last_grab = 0
         while self.running:
