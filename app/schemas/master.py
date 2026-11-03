@@ -28,6 +28,7 @@ class LocationOut(_Out):
     id: uuid.UUID
     name: str
     address: Optional[str] = None
+    camera_count: int = 0   # jumlah sumber video (CCTV + rekaman) yang terpasang di lokasi ini
 
 
 # ---------- Environment ----------

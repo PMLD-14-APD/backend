@@ -1,22 +1,47 @@
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
 from pathlib import Path
 
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI
+
 from app.core.config import settings
 
 from app.core.database import SessionLocal
 from app.models.analysis import AnalysisSession
 from app.models.video_source import VideoSource
 from app.services.inference.manager import inference_manager
+from app.services.retention import run_cleanup
 from app.services.stream_manager import stream_manager
 from app.storage.local import purge_expired_uploads
 from app.api import (
-    activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, master_data, users, video_sources,
+    activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, master_data, storage_admin, users,
+    video_sources,
 )
 
+# import semua model biar SQLAlchemy tau semua tabel (dipakai alembic & relationship)
 from app.models import user, activity_log, environment, ai_model, video_source, analysis  # noqa: F401
+
+
+def _cleanup_once() -> None:
+    db = SessionLocal()
+    try:
+        summary = run_cleanup(db)
+        done = {k: v for k, v in summary.items() if v}
+        if done:
+            print(f"[cleanup] {done}")
+    finally:
+        db.close()
+
+
+async def _cleanup_loop(interval_minutes: int) -> None:
+    """Pembersihan terjadwal (retensi, kuota, file yatim). Berjalan di thread supaya tidak memblokir API."""
+    while True:
+        await asyncio.sleep(interval_minutes * 60)
+        try:
+            await asyncio.to_thread(_cleanup_once)
+        except Exception as exc:  # noqa: BLE001  - satu putaran gagal tidak boleh mematikan penjadwal
+            print(f"[cleanup] gagal: {exc}")
 
 
 @asynccontextmanager
@@ -45,9 +70,18 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    cleanup_task = (
+        asyncio.create_task(_cleanup_loop(settings.cleanup_interval_minutes))
+        if settings.cleanup_interval_minutes > 0 else None
+    )
+
     yield
 
     # --- Shutdown ---
+    if cleanup_task:
+        cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup_task
     inference_manager.stop_all()  
     stream_manager.stop_all()
     print("[shutdown] semua stream & proses inferensi dihentikan")
@@ -55,13 +89,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="APD Detection API", lifespan=lifespan)
 
-# foto bukti pelanggaran (image_url = /snapshots/<session_id>/<file>.jpg)
+# foto bukti disimpan di folder ini, tapi TIDAK dilayani sebagai file statis:
+# klien mengambilnya lewat GET /detection-logs/{id}/image yang wajib login
 Path(settings.snapshot_dir).mkdir(parents=True, exist_ok=True)
-app.mount("/snapshots", StaticFiles(directory=settings.snapshot_dir), name="snapshots")
 
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/users", tags=["Users (Admin)"])
 app.include_router(activity_logs.router)
+app.include_router(storage_admin.router)
 app.include_router(master_data.locations_router)
 app.include_router(master_data.environments_router)
 app.include_router(master_data.apd_classes_router)

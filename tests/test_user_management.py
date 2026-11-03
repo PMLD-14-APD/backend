@@ -39,5 +39,6 @@ def test_peran_tidak_dikenal_ditolak():
 
 def test_ganti_password_baru_minimal_8():
     with pytest.raises(ValidationError):
-        PasswordChange(old_password="lama", new_password="pendek")
-    assert PasswordChange(old_password="lama", new_password="barubaru1").new_password == "barubaru1"
+        PasswordChange(current_password="lama", new_password="pendek", confirm_password="pendek")
+    ok = PasswordChange(current_password="lama", new_password="barubaru1", confirm_password="barubaru1")
+    assert ok.new_password == "barubaru1"

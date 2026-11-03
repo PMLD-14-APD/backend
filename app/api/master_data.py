@@ -2,6 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import exists, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -11,6 +12,7 @@ from app.models.activity_log import log_activity
 from app.models.ai_model import AIModel, ApdClass, EnvironmentApdClass
 from app.models.environment import Environment, Location
 from app.models.user import User
+from app.models.video_source import VideoSource
 from app.schemas.master import (
     AIModelAdminOut,
     AIModelCreate,
@@ -28,6 +30,7 @@ from app.schemas.master import (
     LocationOut,
     LocationUpdate,
 )
+from app.services.history import escape_like
 
 locations_router = APIRouter(prefix="/locations", tags=["Locations"])
 environments_router = APIRouter(prefix="/environments", tags=["Environments"])
@@ -83,15 +86,42 @@ def _remove(db: Session, admin: User, action: str, target_type: str, obj, detail
 # ======================================================================
 # Locations
 # ======================================================================
+def _location_out(loc: Location, camera_count: int) -> LocationOut:
+    out = LocationOut.model_validate(loc)
+    out.camera_count = camera_count
+    return out
+
+
+def _camera_count(db: Session, location_id: uuid.UUID) -> int:
+    return db.query(func.count(VideoSource.id)).filter(VideoSource.location_id == location_id).scalar() or 0
+
+
 @locations_router.get("/", response_model=list[LocationOut])
-def list_locations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Location).order_by(Location.name).all()
+def list_locations(
+    search: Optional[str] = Query(None, description="Cari nama lokasi atau nama kamera di lokasi itu"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    counts = (
+        db.query(VideoSource.location_id.label("lid"), func.count(VideoSource.id).label("n"))
+        .group_by(VideoSource.location_id)
+        .subquery()
+    )
+    q = db.query(Location, func.coalesce(counts.c.n, 0)).outerjoin(counts, counts.c.lid == Location.id)
+    if search and search.strip():
+        like = f"%{escape_like(search.strip())}%"
+        camera_match = exists().where(
+            VideoSource.location_id == Location.id, VideoSource.name.ilike(like, escape="\\")
+        )
+        q = q.filter(Location.name.ilike(like, escape="\\") | camera_match)
+    return [_location_out(loc, n) for loc, n in q.order_by(Location.name).all()]
 
 
 @locations_router.get("/{location_id}", response_model=LocationOut)
 def get_location(location_id: uuid.UUID, db: Session = Depends(get_db),
                  user: User = Depends(get_current_user)):
-    return _get_or_404(db, Location, location_id, "Lokasi")
+    obj = _get_or_404(db, Location, location_id, "Lokasi")
+    return _location_out(obj, _camera_count(db, obj.id))
 
 
 @locations_router.post("/", response_model=LocationOut, status_code=201)
@@ -99,7 +129,8 @@ def create_location(payload: LocationCreate, db: Session = Depends(get_db),
                     admin: User = Depends(require_admin)):
     obj = Location(**payload.model_dump())
     db.add(obj)
-    return _save(db, admin, "location.create", "location", obj, obj.name, "Nama lokasi sudah dipakai")
+    obj = _save(db, admin, "location.create", "location", obj, obj.name, "Nama lokasi sudah dipakai")
+    return _location_out(obj, 0)
 
 
 @locations_router.patch("/{location_id}", response_model=LocationOut)
@@ -107,7 +138,8 @@ def update_location(location_id: uuid.UUID, payload: LocationUpdate, db: Session
                     admin: User = Depends(require_admin)):
     obj = _get_or_404(db, Location, location_id, "Lokasi")
     _apply_update(obj, payload.model_dump(exclude_unset=True), nullable=frozenset({"address"}))
-    return _save(db, admin, "location.update", "location", obj, obj.name, "Nama lokasi sudah dipakai")
+    obj = _save(db, admin, "location.update", "location", obj, obj.name, "Nama lokasi sudah dipakai")
+    return _location_out(obj, _camera_count(db, obj.id))
 
 
 @locations_router.delete("/{location_id}")
