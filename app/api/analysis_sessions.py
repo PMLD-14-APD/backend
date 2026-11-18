@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, is_admin
 from app.models.activity_log import log_activity
 from app.models.ai_model import AIModel
 from app.models.analysis import AnalysisSession, ComplianceStat
@@ -39,7 +39,7 @@ def list_sessions(
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(AnalysisSession).join(VideoSource, AnalysisSession.source_id == VideoSource.id)
-    if current_user.role != "admin":
+    if not is_admin(current_user):
         q = q.filter(VideoSource.user_id == current_user.id)
     if source_id:
         q = q.filter(AnalysisSession.source_id == source_id)

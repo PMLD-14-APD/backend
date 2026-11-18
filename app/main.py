@@ -16,8 +16,8 @@ from app.services.retention import run_cleanup
 from app.services.stream_manager import stream_manager
 from app.storage.local import purge_expired_uploads
 from app.api import (
-    activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, master_data, storage_admin, users,
-    video_sources,
+    activity_logs, analysis_sessions, auth, dashboard, detection_logs, history, live_preview, master_data,
+    storage_admin, users, video_sources,
 )
 
 # import semua model biar SQLAlchemy tau semua tabel (dipakai alembic & relationship)
@@ -115,6 +115,7 @@ app.include_router(master_data.apd_classes_router)
 app.include_router(master_data.ai_models_router)
 app.include_router(video_sources.router)
 app.include_router(analysis_sessions.router)
+app.include_router(live_preview.router)
 app.include_router(detection_logs.router)
 app.include_router(dashboard.router)
 app.include_router(history.router)

@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.security import get_current_user, get_current_user_allow_query_token
+from app.core.security import get_current_user, get_current_user_allow_query_token, is_admin
 from app.models.analysis import AnalysisSession, DetectionLog
 from app.models.user import User
 from app.models.video_source import VideoSource
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/detection-logs", tags=["Detection Logs"])
 
 def _scoped(db: Session, user: User):
     q = db.query(DetectionLog).options(joinedload(DetectionLog.items))
-    if user.role != "admin":
+    if not is_admin(user):
         q = (
             q.join(AnalysisSession, DetectionLog.session_id == AnalysisSession.id)
             .join(VideoSource, AnalysisSession.source_id == VideoSource.id)

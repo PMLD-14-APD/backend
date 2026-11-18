@@ -13,7 +13,7 @@ class User(Base):
     name = Column(String, nullable=False)
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role = Column(String, nullable=False, default="user")        # admin | user
+    role = Column(String, nullable=False, default="user")        # super_admin | admin | user
     status = Column(String, nullable=False, default="pending")   # pending|active|rejected|inactive|deleted
     approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
