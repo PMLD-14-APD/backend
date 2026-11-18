@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, is_admin
 from app.models.activity_log import log_activity
 from app.models.analysis import AnalysisSession
 from app.models.environment import Environment, Location
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/video-sources", tags=["Video Sources"])
 def get_source_for_user(db: Session, source_id: uuid.UUID, user: User) -> VideoSource:
     """Admin boleh semua; user biasa hanya sumber miliknya sendiri."""
     src = db.get(VideoSource, source_id)
-    if src is None or (user.role != "admin" and src.user_id != user.id):
+    if src is None or (not is_admin(user) and src.user_id != user.id):
         raise HTTPException(status_code=404, detail="Sumber video tidak ditemukan")
     return src
 
@@ -99,7 +99,7 @@ def list_sources(
         db.query(VideoSource, Location.name, active_sq.label("active_session_id"))
         .outerjoin(Location, VideoSource.location_id == Location.id)
     )
-    if current_user.role != "admin":
+    if not is_admin(current_user):
         q = q.filter(VideoSource.user_id == current_user.id)
     if search and search.strip():
         like = f"%{escape_like(search.strip())}%"
@@ -134,7 +134,7 @@ def get_source(source_id: uuid.UUID, db: Session = Depends(get_db),
 def register_stream(payload: StreamSourceCreate, db: Session = Depends(get_db),
                     current_user: User = Depends(get_current_user)):
     """Daftarkan sumber CCTV (stream RTSP/HTTP). Koneksi diuji dulu sebelum disimpan."""
-    if settings.cctv_register_admin_only and current_user.role != "admin":
+    if settings.cctv_register_admin_only and not is_admin(current_user):
         raise HTTPException(status_code=403, detail="Pendaftaran CCTV hanya bisa dilakukan admin")
     _check_refs(db, payload.environment_id, payload.location_id)
 

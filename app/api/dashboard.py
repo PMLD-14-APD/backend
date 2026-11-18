@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, is_admin
 from app.models.ai_model import ApdClass
 from app.models.analysis import AnalysisSession, ComplianceStat, DetectionLog, DetectionLogItem
 from app.models.environment import Environment, Location
@@ -66,7 +66,7 @@ def get_filters(
 
 def source_conditions(f: DashboardFilters, user: User) -> list:
     conds = []
-    if user.role != "admin":
+    if not is_admin(user):
         conds.append(VideoSource.user_id == user.id)
     if f.location_id:
         conds.append(VideoSource.location_id == f.location_id)
@@ -143,7 +143,7 @@ def summary(f: DashboardFilters = Depends(get_filters), db: Session = Depends(ge
     processing_now = dict(ses_q.group_by(AnalysisSession.status).all()).get("processing", 0)
 
     pending = None
-    if user.role == "admin":
+    if is_admin(user):
         pending = db.query(func.count(User.id)).filter(User.status == "pending").scalar() or 0
 
     return SummaryOut(
@@ -268,7 +268,7 @@ def active_sessions(db: Session = Depends(get_db), user: User = Depends(get_curr
         .outerjoin(Location, VideoSource.location_id == Location.id)
         .filter(AnalysisSession.status == "processing")
     )
-    if user.role != "admin":
+    if not is_admin(user):
         q = q.filter(VideoSource.user_id == user.id)
     rows = q.order_by(AnalysisSession.started_at.desc()).all()
     counts = {}

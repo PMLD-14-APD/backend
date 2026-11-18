@@ -48,7 +48,7 @@ def main():
         owner = (
             db.query(User).filter(User.username == args.owner.lower(), User.status == "active").first()
             if args.owner else
-            db.query(User).filter(User.role == "admin", User.status == "active").order_by(User.created_at).first()
+            db.query(User).filter(User.role.in_(("admin", "super_admin")), User.status == "active").order_by(User.created_at).first()
         )
         env = db.query(Environment).filter(Environment.name == "Konstruksi").first()
         apds = []

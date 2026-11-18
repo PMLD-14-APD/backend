@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import hash_password, require_admin
+from app.core.security import ADMIN_ROLES, hash_password, is_super_admin, require_admin
 from app.models.activity_log import log_activity
 from app.models.user import User
 from app.schemas.user import RejectRequest, UserCreate, UserOut, UserPage, UserRole, UserStatus, UserUpdate
@@ -31,26 +31,46 @@ def _forbid_self(admin: User, target: User) -> None:
         raise HTTPException(status_code=400, detail="Tidak bisa melakukan aksi ini ke akun sendiri")
 
 
-def _guard_last_admin(db: Session, target: User) -> None:
-    """Tolak aksi yang membuat sistem tidak punya admin aktif lagi.
+def _forbid_super_admin_target(actor: User, target: User) -> None:
+    """Akun super admin hanya boleh diubah/dinonaktifkan/dihapus oleh super admin. Tanpa ini,
+    admin biasa bisa mereset password super admin lalu mengambil alih akunnya."""
+    if target.role == "super_admin" and not is_super_admin(actor):
+        raise HTTPException(status_code=403, detail="Akun super admin hanya bisa dikelola super admin")
 
-    Baris semua admin aktif dikunci (FOR UPDATE) sampai transaksi selesai, jadi dua admin yang
-    saling menonaktifkan di saat bersamaan tetap tidak bisa lolos berdua."""
-    if target.role != "admin" or target.status != "active":
+
+def _guard_last_holder(db: Session, target: User, roles: tuple, detail: str) -> None:
+    """Tolak aksi yang membuat sistem tidak punya pemegang `roles` aktif lagi.
+
+    Baris semua pemegang role aktif dikunci (FOR UPDATE) sampai transaksi selesai, jadi dua akun
+    yang saling menonaktifkan di saat bersamaan tetap tidak bisa lolos berdua."""
+    if target.role not in roles or target.status != "active":
         return
-    active_admin_ids = [
+    active_ids = [
         row.id
         for row in db.query(User.id)
-        .filter(User.role == "admin", User.status == "active")
+        .filter(User.role.in_(roles), User.status == "active")
         .order_by(User.id)
         .with_for_update()
         .all()
     ]
-    if leaves_no_active_admin(active_admin_ids, target.id):
-        raise HTTPException(
-            status_code=400,
-            detail="Ini satu-satunya admin aktif. Jadikan user lain admin dulu sebelum melanjutkan",
-        )
+    if leaves_no_active_admin(active_ids, target.id):
+        raise HTTPException(status_code=400, detail=detail)
+
+
+def _guard_last_admin(db: Session, target: User) -> None:
+    """Tolak aksi yang membuat sistem tidak punya admin aktif lagi (super admin ikut dihitung)."""
+    _guard_last_holder(
+        db, target, ADMIN_ROLES,
+        "Ini satu-satunya admin aktif. Jadikan user lain admin dulu sebelum melanjutkan",
+    )
+
+
+def _guard_last_super_admin(db: Session, target: User) -> None:
+    """Tolak aksi yang membuat sistem tidak punya super admin aktif lagi."""
+    _guard_last_holder(
+        db, target, ("super_admin",),
+        "Ini satu-satunya super admin aktif. Jadikan user lain super admin dulu sebelum melanjutkan",
+    )
 
 
 def _transition(db: Session, admin: User, user: User, allowed_from: set, new_status: str,
@@ -106,7 +126,9 @@ def create_user(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Admin bikin user langsung aktif (tanpa lewat approval)."""
+    """Admin bikin user langsung aktif (tanpa lewat approval). Role super_admin hanya bisa diberikan super admin."""
+    if payload.role == "super_admin" and not is_super_admin(admin):
+        raise HTTPException(status_code=403, detail="Hanya super admin yang boleh membuat akun super admin")
     if db.query(User).filter(User.username == payload.username).first():
         raise HTTPException(status_code=400, detail="Username sudah dipakai")
 
@@ -143,8 +165,12 @@ def update_user(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Ubah nama, username, role, atau reset password. Hanya field yang dikirim yang diproses."""
+    """Ubah nama, username, role, atau reset password. Hanya field yang dikirim yang diproses.
+
+    Admin hanya boleh mengubah nama/role dan mereset password; mengubah username hanya boleh
+    super admin (username yang dikirim sama dengan yang lama dianggap tidak berubah)."""
     user = _get_target(db, user_id)
+    _forbid_super_admin_target(admin, user)
     data = payload.model_dump(exclude_unset=True, exclude={"confirm_password"})
     if not data:
         raise HTTPException(status_code=400, detail="Tidak ada data yang diubah")
@@ -156,6 +182,8 @@ def update_user(
         changed.append("name")
 
     if "username" in data and data["username"] != user.username:
+        if not is_super_admin(admin):
+            raise HTTPException(status_code=403, detail="Username terkunci, hanya super admin yang boleh mengubahnya")
         taken = db.query(User.id).filter(User.username == data["username"], User.id != user.id).first()
         if taken:
             raise HTTPException(status_code=400, detail="Username sudah dipakai")
@@ -164,8 +192,12 @@ def update_user(
 
     if "role" in data and data["role"] != user.role:
         _forbid_self(admin, user)   # admin tidak boleh mengubah role-nya sendiri
-        if user.role == "admin":    # turun dari admin ke user
+        if "super_admin" in (data["role"], user.role) and not is_super_admin(admin):
+            raise HTTPException(status_code=403, detail="Hanya super admin yang boleh mengubah role ke/dari super admin")
+        if user.role in ADMIN_ROLES and data["role"] not in ADMIN_ROLES:   # turun dari admin ke user
             _guard_last_admin(db, user)
+        if user.role == "super_admin" and data["role"] != "super_admin":
+            _guard_last_super_admin(db, user)
         changed.append(f"role ({user.role} -> {data['role']})")
         user.role = data["role"]
 
@@ -223,7 +255,9 @@ def deactivate_user(
 ):
     user = _get_target(db, user_id)
     _forbid_self(admin, user)
+    _forbid_super_admin_target(admin, user)
     _guard_last_admin(db, user)
+    _guard_last_super_admin(db, user)
     return _transition(db, admin, user, {"active"}, "inactive", "user.deactivate")
 
 
@@ -234,6 +268,7 @@ def activate_user(
     admin: User = Depends(require_admin),
 ):
     user = _get_target(db, user_id)
+    _forbid_super_admin_target(admin, user)
     return _transition(db, admin, user, {"inactive"}, "active", "user.activate")
 
 
@@ -246,7 +281,9 @@ def delete_user(
     """Soft delete: status jadi 'deleted', barisnya tetap ada supaya riwayat tidak putus."""
     user = _get_target(db, user_id)
     _forbid_self(admin, user)
+    _forbid_super_admin_target(admin, user)
     _guard_last_admin(db, user)
+    _guard_last_super_admin(db, user)
     return _transition(
         db, admin, user, {"pending", "active", "rejected", "inactive"}, "deleted", "user.delete"
     )

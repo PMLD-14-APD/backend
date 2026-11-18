@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -9,13 +10,14 @@ from app.core.security import (
     get_current_user,
     get_token_payload,
     hash_password,
+    is_super_admin,
     revoke_token,
     session_age_exceeded,
     verify_password,
 )
 from app.models.activity_log import log_activity
 from app.models.user import User
-from app.schemas.auth import PasswordChange, Token, UserOut, UserRegister
+from app.schemas.auth import PasswordChange, ProfileUpdate, Token, UserOut, UserRegister
 
 router = APIRouter()
 
@@ -137,4 +139,32 @@ def logout(
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: User = Depends(get_current_user)):
     """Endpoint buat tes: kalau ini berhasil, berarti token kamu valid."""
+    return current_user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(
+    payload: ProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Ubah profil sendiri. Username terkunci untuk admin dan user biasa: hanya super admin yang
+    boleh mengubahnya. Ganti password tetap lewat POST /auth/change-password (semua role)."""
+    if not is_super_admin(current_user):
+        raise HTTPException(status_code=403, detail="Username terkunci, hanya super admin yang boleh mengubahnya")
+    if payload.username == current_user.username:
+        return current_user
+    taken = db.query(User.id).filter(User.username == payload.username, User.id != current_user.id).first()
+    if taken:
+        raise HTTPException(status_code=400, detail="Username sudah dipakai")
+    old = current_user.username
+    current_user.username = payload.username
+    log_activity(db, current_user.id, "auth.update_profile", "user", current_user.id,
+                 f"{payload.username} | diubah: username ({old} -> {payload.username})")
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Username sudah dipakai")
+    db.refresh(current_user)
     return current_user

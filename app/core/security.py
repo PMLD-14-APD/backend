@@ -151,8 +151,28 @@ def get_current_user_allow_query_token(
     return _load_active_user(_decode_token(raw), db)
 
 
+# super_admin punya semua hak admin, ditambah hak ubah username (lihat PATCH /auth/me dan PATCH /users/{id})
+ADMIN_ROLES = ("admin", "super_admin")
+
+
+def is_admin(user: User) -> bool:
+    """True untuk admin maupun super admin."""
+    return user.role in ADMIN_ROLES
+
+
+def is_super_admin(user: User) -> bool:
+    return user.role == "super_admin"
+
+
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Dependency tambahan: pasang ini di endpoint yang khusus admin."""
-    if current_user.role != "admin":
+    """Dependency tambahan: pasang ini di endpoint yang khusus admin (admin atau super admin)."""
+    if not is_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hanya admin yang boleh akses ini")
+    return current_user
+
+
+def require_super_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Dependency tambahan: khusus super admin."""
+    if not is_super_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Hanya super admin yang boleh akses ini")
     return current_user

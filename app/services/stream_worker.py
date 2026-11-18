@@ -7,7 +7,8 @@ from app.services.stream_url import mask_stream_url
 
 class StreamWorker(threading.Thread):
     """Satu thread per sesi analisis CCTV. Nyimpen frame TERBARU aja (bukan antrean),
-    biar nggak ada lag menumpuk kalau processing lebih lambat dari stream."""
+    biar nggak ada lag menumpuk kalau processing lebih lambat dari stream.
+    target_fps dipakai pembaca (inferensi), worker sendiri membaca stream dengan fps penuh."""
 
     def __init__(self, session_id: str, stream_url: str, target_fps: int = 5, on_frame=None):
         super().__init__(daemon=True)
@@ -37,7 +38,6 @@ class StreamWorker(threading.Thread):
         self.connected = True
         print(f"[stream:{self.session_id}] Terhubung: {mask_stream_url(self.stream_url)}")
 
-        last_grab = 0
         while self.running:
             ret, frame = cap.read()
             if not ret:
@@ -47,15 +47,14 @@ class StreamWorker(threading.Thread):
                 cap = cv2.VideoCapture(self.stream_url)
                 continue
 
-            now = time.time()
-            if now - last_grab >= self.interval:
-                with self.lock:
-                    self.latest_frame = frame
-                    self.frame_seq += 1
-                last_grab = now
+            # Simpan SETIAP frame (tampilan live jadi mulus); laju inferensi dibatasi oleh pembacanya
+            # (iter_stream_frames, sesuai target_fps), bukan di sini.
+            with self.lock:
+                self.latest_frame = frame
+                self.frame_seq += 1
 
-                if self.on_frame:
-                    self.on_frame(self.session_id, frame)
+            if self.on_frame:
+                self.on_frame(self.session_id, frame)
 
         cap.release()
         self.connected = False

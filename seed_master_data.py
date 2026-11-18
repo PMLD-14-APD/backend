@@ -14,9 +14,11 @@ from app.models.environment import Environment
 ENVIRONMENT = {"name": "Konstruksi", "description": "Area proyek konstruksi"}
 
 # (name, label_key, description, wajib?)
+# label_key = nama kelas model PPE AI Ops (yolo11m_ppe_v001.pt). Kelas lain yang tersedia di model:
+# Gloves, Goggles, Mask (tambahkan di sini kalau environment mewajibkannya). Kelas NO-* tidak dipakai.
 APD_CLASSES = [
-    ("Helm", "helmet", "Helm keselamatan", True),
-    ("Rompi", "vest", "Rompi keselamatan", True),
+    ("Helm", "Hardhat", "Helm keselamatan", True),
+    ("Rompi", "Safety Vest", "Rompi keselamatan", True),
 ]
 
 

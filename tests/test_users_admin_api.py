@@ -75,7 +75,7 @@ def test_get_user_dan_404(env):
 
 def test_patch_ubah_data_dan_reset_password(env):
     c, make, auth, db = env
-    admin = make("admin1", "admin")
+    admin = make("admin1", "super_admin")   # ubah username hanya boleh super admin
     u = make("target")
     r = c.patch(f"/users/{u.id}", headers=auth(admin),
                 json={"name": "Nama Baru", "username": "BARU", "password": "passbaru123", "confirm_password": "passbaru123"})
@@ -88,7 +88,7 @@ def test_patch_ubah_data_dan_reset_password(env):
 
 def test_patch_validasi(env):
     c, make, auth, _ = env
-    admin = make("admin1", "admin")
+    admin = make("admin1", "super_admin")   # ubah username hanya boleh super admin
     u = make("target")
     make("dipakai")
     h = auth(admin)

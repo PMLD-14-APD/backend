@@ -17,6 +17,7 @@ from app.models.video_source import VideoSource
 from app.services.analysis import finalize_session
 from app.services.inference import detector as detector_module
 from app.services.inference.compliance import LENGKAP, RANK, PersonResult, evaluate
+from app.services.inference.preview import ItemOverlay, LivePreview, PersonOverlay
 from app.services.inference.tracker import IouTracker
 from app.services.stream_manager import stream_manager
 from app.storage.local import save_snapshot
@@ -57,18 +58,27 @@ def iter_file_frames(path: str, target_fps: int, stop: threading.Event):
         cap.release()
 
 
-def iter_stream_frames(session_id: str, stop: threading.Event):
+def iter_stream_frames(session_id: str, stop: threading.Event, target_fps: int = 5):
+    """Frame terbaru dari StreamWorker, paling banyak target_fps kali per detik."""
     start, last_seq, n = time.time(), -1, 0
+    interval, next_at = 1.0 / max(target_fps, 1), 0.0
     while not stop.is_set():
         worker = stream_manager.workers.get(session_id)
         if worker is None:
             return
-        seq, frame = worker.get_latest()
-        if frame is None or seq == last_seq:
+        wait = next_at - time.monotonic()
+        if wait > 0:
+            time.sleep(min(wait, 0.05))
+            continue
+        if worker.frame_seq == last_seq or worker.latest_frame is None:
             if not worker.is_alive():
                 raise RuntimeError("Stream CCTV gagal terhubung / terputus")
-            time.sleep(0.05)
+            time.sleep(0.005)
             continue
+        seq, frame = worker.get_latest()
+        if frame is None:
+            continue
+        next_at = time.monotonic() + interval
         last_seq = seq
         n += 1
         yield n, time.time() - start, frame
@@ -84,6 +94,7 @@ class SessionRunner(threading.Thread):
         self.buckets: dict[datetime, Bucket] = {}
         self.stat_rows: dict[datetime, uuid.UUID] = {}
         self.pending_logs: list[DetectionLog] = []
+        self.preview = LivePreview()          # frame beranotasi terakhir untuk tayangan langsung
 
     def stop(self):
         self._stop_event.set()
@@ -140,23 +151,28 @@ class SessionRunner(threading.Thread):
             "target_fps": source.target_fps,
             "weights_path": model.weights_path,
             "apd_ids": {r.label_key: r.id for r in rows},
+            "apd_names": {r.label_key: r.name for r in rows},
         }
 
     def _process(self, db, ctx: dict, detector) -> None:
         if ctx["source_type"] == "video_upload":
             frames = iter_file_frames(ctx["file_path"], ctx["target_fps"], self._stop_event)
         else:
-            frames = iter_stream_frames(str(self.session_id), self._stop_event)
+            frames = iter_stream_frames(str(self.session_id), self._stop_event, ctx["target_fps"])
+            sid = str(self.session_id)
+            self.preview.raw_source = lambda: stream_manager.workers.get(sid)   # tampilan live pakai fps penuh
 
         required = list(ctx["apd_ids"])
         last_flush = time.monotonic()
         for frame_no, video_ts, frame in frames:
-            results = evaluate(detector.detect(frame), required, settings.person_label)
+            detections = detector.detect(frame)
+            results = evaluate(detections, required, settings.person_label)
             ids = self.tracker.update([r.box for r in results], frame_no)
             now = datetime.now(timezone.utc)
             for result, tid in zip(results, ids):
                 self._handle_person(ctx, result, tid, frame, frame_no, video_ts, now)
             self.states = {t: s for t, s in self.states.items() if t in self.tracker.tracks}
+            self._update_preview(ctx, frame, detections, results, ids)
 
             if time.monotonic() - last_flush >= settings.stats_flush_seconds:
                 self._flush(db)
@@ -208,6 +224,17 @@ class SessionRunner(threading.Thread):
             ],
         )
         self.pending_logs.append(log)
+
+    def _update_preview(self, ctx, frame, detections, results, ids) -> None:
+        names = ctx["apd_names"]
+        persons = []
+        for result, tid in zip(results, ids):
+            st = self.states.get(tid)
+            status = st.confirmed if st else None
+            missing = tuple(names.get(k, k) for k in result.missing) if status and status != LENGKAP else ()
+            persons.append(PersonOverlay(tid, result.box, status, missing))
+        items = [ItemOverlay(names[d.label], d.box) for d in detections if d.label in names]
+        self.preview.update(frame, persons, items)
 
     def _flush(self, db) -> None:
         """Tulis log baru + statistik yang berubah ke DB (idempoten, aman dipanggil berulang)."""

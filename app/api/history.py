@@ -13,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, is_admin
 from app.core.timeutils import day_bounds
 from app.models.ai_model import ApdClass
 from app.models.analysis import AnalysisSession, DetectionLog, DetectionLogItem
@@ -45,7 +45,7 @@ def date_range(
 
 def _scope(query, user: User):
     """Query harus sudah join VideoSource."""
-    if user.role != "admin":
+    if not is_admin(user):
         query = query.filter(VideoSource.user_id == user.id)
     return query
 

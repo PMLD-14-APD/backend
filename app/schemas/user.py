@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.auth import UserOut, UserRegister
 
 UserStatus = Literal["pending", "active", "rejected", "inactive", "deleted"]
-UserRole = Literal["admin", "user"]
+UserRole = Literal["super_admin", "admin", "user"]
 
 
 class UserCreate(UserRegister):

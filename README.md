@@ -23,7 +23,7 @@ Skema database mengikuti `erd_apd_revisi.drawio` (12 tabel).
 | Dashboard dan riwayat analisis | Selesai |
 | CORS untuk frontend di origin/port lain | Selesai |
 | Alert real-time (WebSocket) | **Belum** – butuh integrasi AI Ops |
-| Video beranotasi (fitur "perbesar") | **Belum** – butuh integrasi AI Ops |
+| Video beranotasi real-time (fitur "perbesar"): MJPEG + frame terakhir, ikut aturan akses sesi | Selesai |
 
 > Kode inferensi (`app/services/inference/`) sudah ada, tetapi **bobot model (`.pt`) tidak disertakan di repo**.
 > Tanpa bobot dari tim AI Ops, sesi analisis akan berakhir `failed` dengan pesan
@@ -57,8 +57,9 @@ Siapkan database dan data awal:
 
 ```bash
 alembic upgrade head          # buat semua tabel + indeks
-python seed_master_data.py    # environment "Konstruksi" + kelas helmet & vest
+python seed_master_data.py    # environment "Konstruksi" + kelas Hardhat & Safety Vest (sesuai model PPE)
 python create_admin.py        # buat akun admin pertama (interaktif)
+python create_admin.py --super-admin   # buat akun super admin
 python seed_demo_data.py      # opsional: data contoh untuk demo
 ```
 
@@ -93,7 +94,7 @@ uvicorn app.main:app --reload
 | `VALIDATE_STREAM_ON_CREATE` | `true` | Uji koneksi stream sebelum disimpan (matikan di dev tanpa kamera) |
 | `STREAM_PROBE_TIMEOUT_SECONDS` | `8` | Batas waktu uji koneksi |
 | `MODELS_DIR` / `SNAPSHOT_DIR` | `storage/models` / `storage/snapshots` | Folder bobot model dan foto bukti |
-| `PERSON_LABEL` | `person` | Nama kelas orang pada keluaran model |
+| `PERSON_LABEL` | `person` | Nama kelas orang pada keluaran model (model PPE AI Ops: `Person`) |
 | `INFERENCE_CONF` | `0.4` | Ambang confidence deteksi |
 | `CONFIRM_FRAMES` | `3` | Status dianggap sah setelah N frame berturut-turut |
 | `VIOLATION_COOLDOWN_SECONDS` | `30` | Jeda minimal pencatatan ulang pelanggaran orang yang sama |
@@ -111,7 +112,9 @@ Variabel `MINIO_*` ada di konfigurasi tetapi **belum dipakai**; foto bukti saat 
 4. `POST /analysis-sessions/` → `/{id}/start` → `/{id}/stop`.
 5. Hasil: `GET /detection-logs/?session_id=...`, `GET /analysis-sessions/{id}/stats`, dashboard, dan riwayat.
 
-> `label_key` kelas APD harus **sama persis** dengan nama kelas keluaran model (default: `helmet`, `vest`).
+> `label_key` kelas APD harus **sama persis** dengan nama kelas keluaran model. Model PPE AI Ops (`yolo11m_ppe_v001.pt`):
+> `Person`, `Hardhat`, `Safety Vest`, `Gloves`, `Goggles`, `Mask` (kelas `NO-*` diabaikan). Kelas wajib per environment diatur
+> di `seed_master_data.py` atau lewat `/apd-classes` + `PUT /environments/{id}/apd-classes`.
 
 ## Ringkasan endpoint
 
@@ -127,7 +130,17 @@ Semua endpoint selain `register`, `login`, `/` dan `/health` membutuhkan header
 | POST | `/refresh` | Login | Tukar token yang masih berlaku dengan token baru |
 | POST | `/change-password` | Login | Ganti password sendiri |
 | POST | `/logout` | Login | Cabut token yang dipakai |
-| GET | `/me` | Login | Profil sendiri |
+| GET | `/me` | Login | Profil sendiri (+ `can_edit_username`: `false` = field username dikunci di UI) |
+| PATCH | `/me` | Super admin | Ubah username sendiri (`{"username": "..."}`); admin/user dijawab 403 |
+
+### Role & aturan profil
+| Role | Username | Password |
+|---|---|---|
+| `super_admin` | Bisa diubah (`PATCH /auth/me`) | Bisa diubah (`POST /auth/change-password`) |
+| `admin` | Terkunci (403) | Bisa diubah |
+| `user` | Terkunci (403) | Bisa diubah |
+
+`super_admin` punya semua hak `admin`. Akun super admin hanya bisa diubah/dinonaktifkan/dihapus super admin lain, dan role `super_admin` hanya bisa diberikan oleh super admin. Sistem menolak aksi yang menghabiskan super admin aktif terakhir. Role di kolom `users.role` berupa string biasa, jadi tidak perlu migrasi; promosikan akun yang ada dengan `UPDATE users SET role='super_admin' WHERE username='...'` atau pakai `create_admin.py --super-admin`.
 
 ### Users – `/users` (Admin)
 | Method | Path | Fungsi |
@@ -135,7 +148,7 @@ Semua endpoint selain `register`, `login`, `/` dan `/health` membutuhkan header
 | GET | `/` | Daftar user: `search`, `status`, `role`, `sort_order`, `limit`, `offset` |
 | POST | `/` | Buat user langsung aktif |
 | GET | `/{id}` | Detail user |
-| PATCH | `/{id}` | Ubah `name`, `username`, `role`, `password` (+ `confirm_password`) |
+| PATCH | `/{id}` | Ubah `name`, `username`, `role`, `password` (+ `confirm_password`). `username` hanya boleh super admin |
 | POST | `/{id}/approve` · `/reject` · `/deactivate` · `/activate` | Ubah status akun |
 | DELETE | `/{id}` | Soft delete |
 
@@ -173,6 +186,15 @@ Semua endpoint selain `register`, `login`, `/` dan `/health` membutuhkan header
 | POST | `/{id}/start` · `/{id}/stop` | Mulai / hentikan analisis |
 | GET | `/{id}` · `/{id}/stats` | Detail sesi / statistik kepatuhan per jam |
 | GET | `/stream-status/live` | Stream dan proses inferensi yang sedang berjalan |
+| GET | `/{id}/live.mjpg` | Video beranotasi real-time (MJPEG, langsung jadi `src` `<img>`), hanya saat sesi `processing`. Header `Authorization` atau `?token=` |
+| GET | `/{id}/preview.jpg` | Satu frame beranotasi terakhir (thumbnail). Hijau = lengkap, oranye = kurang, merah = tanpa APD, abu-abu = belum stabil |
+
+> Tayangan live CCTV memakai frame kamera terbaru (fps penuh) dengan kotak hasil inferensi terakhir (maks. 1 detik),
+> sedangkan inferensi sendiri berjalan `target_fps` kali per detik. RTX-class GPU sanggup `target_fps` 10–15; kalau dinaikkan,
+> naikkan juga `CONFIRM_FRAMES` (dihitung per frame inferensi).
+>
+> Uji tanpa CCTV: `python scripts/cctv_bridge.py 0` (webcam) atau `python scripts/cctv_bridge.py video.mp4`, lalu daftarkan
+> `http://127.0.0.1:8554/cam.mjpg` sebagai CCTV. Delay jembatan + live ±20–40 ms.
 
 ### Detection logs, dashboard, riwayat
 | Method | Path | Fungsi |

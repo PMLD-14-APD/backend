@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 
 class UserRegister(BaseModel):
@@ -28,6 +28,13 @@ class UserOut(BaseModel):
     approved_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
+    @computed_field
+    @property
+    def can_edit_username(self) -> bool:
+        """Dipakai frontend: False = field username di halaman profil dikunci (read-only).
+        Hanya super admin yang boleh mengubah username."""
+        return self.role == "super_admin"
+
 
 class Token(BaseModel):
     access_token: str
@@ -47,3 +54,13 @@ class PasswordChange(BaseModel):
         if self.new_password == self.current_password:
             raise ValueError("Password baru harus berbeda dari password lama")
         return self
+
+
+class ProfileUpdate(BaseModel):
+    """Ubah profil sendiri (khusus super admin). Password tetap lewat POST /auth/change-password."""
+    username: str = Field(min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_.-]+$")
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def normalize_username(cls, v):
+        return v.strip().lower() if isinstance(v, str) else v
