@@ -41,8 +41,13 @@ class Settings(BaseSettings):
     # Inferensi AI
     models_dir: str = "storage/models"        # folder bobot model (weights_path relatif ke sini)
     snapshot_dir: str = "storage/snapshots"   # foto bukti pelanggaran (sementara lokal, belum MinIO)
-    person_label: str = "person"              # nama kelas orang di keluaran model
-    inference_conf: float = 0.4               # ambang confidence deteksi
+    person_label: str = "Person"
+    person_weights_path: str = "yolo11m.pt"
+    person_conf: float = 0.50
+    min_person_height_ratio: float = 0.15
+    inference_conf: float = 0.25
+    hardhat_conf: float = 0.15
+    vest_conf: float = 0.15
     confirm_frames: int = 3                   # status baru dianggap sah setelah N frame berturut-turut
     violation_cooldown_seconds: int = 30      # jeda minimal pencatatan ulang pelanggaran orang yang sama
     stats_flush_seconds: int = 10             # seberapa sering hasil ditulis ke DB
