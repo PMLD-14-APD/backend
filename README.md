@@ -96,6 +96,10 @@ docker compose down           # matikan  (JANGAN pakai -v: menghapus database)
 - `DATABASE_URL` untuk container diatur oleh compose (DB container), bukan dari `../.env`.
 - Uvicorn wajib **1 worker** (inferensi berjalan sebagai thread di proses API).
 - Backup harian: `deploy/backup.sh` (pasang di crontab).
+- Kamera yang mati/putus **disambung ulang otomatis** (jeda 2 s, 4 s, ... maks. `STREAM_RETRY_MAX_SECONDS`).
+  Sesi tetap `processing`, tayangan live menampilkan pita "KAMERA OFFLINE", dan `GET /analysis-sessions/{id}`
+  mengembalikan `stream_state` (`connecting` | `connected` | `reconnecting`) + `stream_offline_seconds`.
+  Sesi baru ditandai gagal kalau offline lebih dari `STREAM_OFFLINE_GIVEUP_MINUTES` (0 = tidak pernah).
 - Kamera HP: DroidCam (`http://<ip-hp>:4747/video`) didaftarkan sebagai sumber CCTV. Versi gratis hanya
   melayani satu penonton, jadi jangan buka stream-nya di browser saat sedang dianalisis.
 

@@ -68,13 +68,13 @@ def test_stream_pakai_frame_kamera_terbaru_dengan_kotak_terakhir(monkeypatch):
     p.update(frame(), [PersonOverlay(1, (100, 50, 300, 300), TIDAK)], [])   # hasil inferensi frame lama
     worker.push(200)                                                        # frame kamera yang lebih baru
     key, data = p.jpeg()
-    assert key == p.seq == (1, 1)
+    assert key == p.seq == (1, 1, False)
     img = _decoded(data)
     assert abs(int(img[200, 500, 0]) - 200) < 10          # latar = frame kamera terbaru, bukan frame inferensi (90)
     assert img[200, 100, 2] > 150 and img[200, 100, 0] < 120   # garis kotak merah tetap digambar
 
     worker.push(200)                                       # frame baru lagi -> kunci berubah, encode ulang
-    assert p.seq == (2, 1) and p.jpeg()[0] == (2, 1)
+    assert p.seq == (2, 1, False) and p.jpeg()[0] == (2, 1, False)
 
     import app.services.inference.preview as preview_mod   # hasil inferensi basi -> kotak tidak digambar
     now = preview_mod.time.monotonic()
@@ -87,10 +87,10 @@ def test_stream_pakai_frame_kamera_terbaru_dengan_kotak_terakhir(monkeypatch):
 def test_stream_belum_ada_frame_kamera_pakai_frame_inferensi():
     worker = FakeWorker()
     p = LivePreview(raw_source=lambda: worker)
-    assert p.seq == (None, 0) and p.jpeg()[1] is None
+    assert p.seq == (None, 0, False) and p.jpeg()[1] is None
     p.update(frame(), [], [])
     key, data = p.jpeg()
-    assert key == p.seq == (None, 1) and data.startswith(JPEG_MAGIC)
+    assert key == p.seq == (None, 1, False) and data.startswith(JPEG_MAGIC)
 
 
 def test_annotate_perkecil_frame_besar_dan_tahan_kotak_di_tepi():

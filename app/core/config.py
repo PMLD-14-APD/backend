@@ -36,7 +36,12 @@ class Settings(BaseSettings):
     # Sumber CCTV
     cctv_register_admin_only: bool = False     # True = hanya admin yang boleh mendaftarkan CCTV (default: ikut ERD, semua user)
     validate_stream_on_create: bool = True     # uji koneksi stream sebelum disimpan (matikan di dev tanpa kamera)
-    stream_probe_timeout_seconds: int = 8
+    stream_probe_timeout_seconds: int = 8      # juga batas waktu buka/baca stream saat analisis
+    # Kamera offline/putus: worker mencoba lagi dengan jeda min -> x2 -> ... -> max (detik)
+    stream_retry_min_seconds: float = 2
+    stream_retry_max_seconds: float = 15
+    # Sesi CCTV ditandai gagal kalau kamera offline lebih lama dari ini (menit). 0 = tunggu selamanya.
+    stream_offline_giveup_minutes: float = 0
 
     # Inferensi AI
     models_dir: str = "storage/models"        # folder bobot model (weights_path relatif ke sini)

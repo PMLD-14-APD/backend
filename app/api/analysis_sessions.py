@@ -29,6 +29,16 @@ def get_session_for_user(db: Session, session_id: uuid.UUID, user: User) -> Anal
     return session
 
 
+def with_stream_state(session: AnalysisSession) -> SessionOut:
+    """SessionOut + status kamera real-time (kalau sesi punya StreamWorker yang hidup)."""
+    out = SessionOut.model_validate(session)
+    state = stream_manager.state_of(str(session.id))
+    if state is not None:
+        out.stream_state = state["state"]
+        out.stream_offline_seconds = state["offline_seconds"]
+    return out
+
+
 @router.get("/", response_model=list[SessionOut])
 def list_sessions(
     source_id: Optional[uuid.UUID] = None,
@@ -45,7 +55,8 @@ def list_sessions(
         q = q.filter(AnalysisSession.source_id == source_id)
     if status:
         q = q.filter(AnalysisSession.status == status)
-    return q.order_by(AnalysisSession.created_at.desc()).offset(offset).limit(limit).all()
+    rows = q.order_by(AnalysisSession.created_at.desc()).offset(offset).limit(limit).all()
+    return [with_stream_state(s) for s in rows]
 
 
 @router.get("/stream-status/live")
@@ -56,7 +67,7 @@ def live_stream_status(current_user: User = Depends(get_current_user)):
 @router.get("/{session_id}", response_model=SessionOut)
 def get_session(session_id: uuid.UUID, db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
-    return get_session_for_user(db, session_id, current_user)
+    return with_stream_state(get_session_for_user(db, session_id, current_user))
 
 
 @router.post("/", response_model=SessionOut, status_code=201)

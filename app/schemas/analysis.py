@@ -29,6 +29,9 @@ class SessionOut(BaseModel):
     compliance_rate: Optional[float]
     error_message: Optional[str]
     created_at: datetime
+    # Hanya untuk sesi CCTV yang sedang berjalan (bukan dari DB): connecting | connected | reconnecting
+    stream_state: Optional[str] = None
+    stream_offline_seconds: Optional[float] = None
 
     class Config:
         from_attributes = True

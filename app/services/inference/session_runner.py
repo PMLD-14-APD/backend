@@ -58,8 +58,15 @@ def iter_file_frames(path: str, target_fps: int, stop: threading.Event):
         cap.release()
 
 
-def iter_stream_frames(session_id: str, stop: threading.Event, target_fps: int = 5):
-    """Frame terbaru dari StreamWorker, paling banyak target_fps kali per detik."""
+def iter_stream_frames(session_id: str, stop: threading.Event, target_fps: int = 5,
+                       giveup_seconds: float | None = None):
+    """Frame terbaru dari StreamWorker, paling banyak target_fps kali per detik.
+
+    Selama kamera offline, generator menunggu (worker menyambung ulang sendiri) dan tidak ada frame
+    yang dianalisis. Error hanya kalau offline lebih lama dari giveup_seconds (None/0 = tidak pernah)
+    atau thread worker mati tanpa di-stop."""
+    if giveup_seconds is None:
+        giveup_seconds = settings.stream_offline_giveup_minutes * 60
     start, last_seq, n = time.time(), -1, 0
     interval, next_at = 1.0 / max(target_fps, 1), 0.0
     while not stop.is_set():
@@ -70,10 +77,13 @@ def iter_stream_frames(session_id: str, stop: threading.Event, target_fps: int =
         if wait > 0:
             time.sleep(min(wait, 0.05))
             continue
-        if worker.frame_seq == last_seq or worker.latest_frame is None:
-            if not worker.is_alive():
-                raise RuntimeError("Stream CCTV gagal terhubung / terputus")
-            time.sleep(0.005)
+        if worker.frame_seq == last_seq or worker.latest_frame is None or not worker.connected:
+            if not worker.is_alive() and not stop.is_set():
+                raise RuntimeError("Stream CCTV berhenti tanpa diminta")
+            if giveup_seconds and worker.offline_seconds() > giveup_seconds:
+                raise RuntimeError(
+                    f"Kamera offline lebih dari {giveup_seconds / 60:g} menit (STREAM_OFFLINE_GIVEUP_MINUTES)")
+            time.sleep(0.05 if not worker.connected else 0.005)
             continue
         seq, frame = worker.get_latest()
         if frame is None:
