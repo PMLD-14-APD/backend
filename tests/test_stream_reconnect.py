@@ -199,3 +199,26 @@ def test_preview_berubah_saat_offline_dan_online_lagi():
     assert key_off != key_on and jpg_off != jpg_on
     worker.connected = True
     assert p.jpeg(128)[0] == key_on
+
+
+def test_restart_ganti_url_tanpa_celah_worker(manager):
+    first = make_worker(ScriptedOpener([]), "s5")
+    manager.workers["s5"] = first
+    first.start()
+    seen_none = []
+
+    def watch():
+        while first.running:
+            seen_none.append(manager.workers.get("s5") is None)
+            time.sleep(0.0005)
+
+    t = threading.Thread(target=watch)
+    t.start()
+    assert wait_until(lambda: first.connected)
+    manager._new_worker = lambda sid, url, fps=5, on_frame=None: make_worker(ScriptedOpener([]), sid)
+    assert manager.restart("s5", "http://cam-baru/video") is True
+    t.join(1)
+    new = manager.workers["s5"]
+    assert new is not first and not any(seen_none), "sesi tidak boleh sempat tanpa worker"
+    assert wait_until(lambda: new.connected) and wait_until(lambda: not first.is_alive())
+    assert manager.restart("tidak-ada", "http://x/y") is False

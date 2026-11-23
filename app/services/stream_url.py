@@ -57,3 +57,24 @@ def mask_stream_url(url):
             authority = f"{user}:***@{hostport}" if colon else f"{userinfo}@{hostport}"
         url = f"{scheme}://{authority}{tail}"
     return _SECRET_QUERY.sub(r"\1***", url)
+
+def unmask_stream_url(new: str, old) -> str:
+    """URL hasil edit di FE bisa masih memuat password tersamar ('***') dari respons API.
+    Kalau username-nya sama dengan URL lama, '***' diganti password lama supaya user tidak perlu
+    mengetik ulang password saat hanya mengganti IP/port. Raise ValueError kalau masih ada '***'."""
+    if old and "***" in new:
+        n_scheme, n_sep, n_rest = new.partition("://")
+        o_scheme, o_sep, o_rest = old.partition("://")
+        if n_sep and o_sep:
+            n_auth, n_tail = _split_authority(n_rest)
+            o_auth, _ = _split_authority(o_rest)
+            if "@" in n_auth and "@" in o_auth:
+                n_user, _, n_host = n_auth.rpartition("@")
+                o_user, _, _ = o_auth.rpartition("@")
+                n_name, n_colon, n_pw = n_user.partition(":")
+                o_name, o_colon, o_pw = o_user.partition(":")
+                if n_pw == "***" and o_colon and n_name == o_name:
+                    new = f"{n_scheme}://{n_name}:{o_pw}@{n_host}{n_tail}"
+    if "***" in new:
+        raise ValueError("Password/token pada URL tersamar (***). Ketik ulang password kamera")
+    return new

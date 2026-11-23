@@ -30,6 +30,14 @@ class VideoSourceUpdate(BaseModel):
     location_id: Optional[uuid.UUID] = None
     target_fps: Optional[int] = Field(default=None, ge=1, le=30)
     status: Optional[Literal["active", "inactive", "maintenance"]] = None
+    # Khusus CCTV (mis. IP kamera berubah). Boleh berisi password tersamar '***' dari respons API:
+    # password lama dipakai lagi kalau username-nya sama.
+    stream_url: Optional[str] = Field(default=None, min_length=1)
+
+    @field_validator("stream_url")
+    @classmethod
+    def cek_stream_url(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else validate_stream_url(v)
 
 
 class VideoSourceOut(BaseModel):

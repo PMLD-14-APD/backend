@@ -21,6 +21,7 @@ from app.services.history import escape_like
 from app.services.inference.manager import inference_manager
 from app.services.stream_manager import stream_manager
 from app.services.stream_probe import probe_stream
+from app.services.stream_url import mask_stream_url, unmask_stream_url
 from app.storage import local
 from app.storage.snapshots import delete_session_snapshots
 
@@ -227,9 +228,30 @@ def update_source(source_id: uuid.UUID, payload: VideoSourceUpdate, db: Session 
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and src.source_type == "video_upload":
         raise HTTPException(status_code=422, detail="Status sumber unggahan tidak bisa diubah")
+    url_changed = False
+    if "stream_url" in data:
+        if src.source_type != "cctv_stream":
+            raise HTTPException(status_code=422, detail="URL hanya bisa diubah untuk sumber CCTV")
+        new_url = data["stream_url"]
+        if new_url is not None:
+            if new_url == mask_stream_url(src.stream_url):
+                data.pop("stream_url")                    # FE mengirim ulang URL tersamar = tidak berubah
+            else:
+                try:
+                    new_url = unmask_stream_url(new_url, src.stream_url)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                if new_url == src.stream_url:
+                    data.pop("stream_url")
+                else:
+                    if settings.validate_stream_on_create:
+                        ok, reason = probe_stream(new_url, settings.stream_probe_timeout_seconds)
+                        if not ok:
+                            raise HTTPException(status_code=422, detail=f"Tidak dapat terhubung ke stream: {reason}")
+                    data["stream_url"], url_changed = new_url, True
     if "location_id" in data:
         _check_refs(db, src.environment_id, data["location_id"])
-    for key in ("name", "target_fps", "status"):
+    for key in ("name", "target_fps", "status", "stream_url"):
         if key in data and data[key] is None:
             raise HTTPException(status_code=422, detail=f"Field '{key}' tidak boleh null")
     for key, value in data.items():
@@ -237,6 +259,13 @@ def update_source(source_id: uuid.UUID, payload: VideoSourceUpdate, db: Session 
     log_activity(db, current_user.id, "source.update", "video_source", src.id, src.name)
     db.commit()
     db.refresh(src)
+    if url_changed:
+        # sesi yang sedang berjalan pindah ke URL baru tanpa dihentikan (riwayat tetap menyambung)
+        running = db.query(AnalysisSession.id).filter(
+            AnalysisSession.source_id == src.id, AnalysisSession.status == "processing"
+        ).all()
+        for (sid,) in running:
+            stream_manager.restart(str(sid), src.stream_url, src.target_fps)
     return _out_for(db, src)
 
 

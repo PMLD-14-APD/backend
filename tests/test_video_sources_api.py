@@ -239,3 +239,100 @@ def test_lokasi_create_update_camera_count(env):
     env.source(admin, e, "c1", env.db.get(Location, uuid.UUID(created["id"])))
     upd = env.client.patch(f"/locations/{created['id']}", headers=h, json={"address": "Jl. X"}).json()
     assert upd["camera_count"] == 1 and upd["address"] == "Jl. X"
+
+# ---------- edit kamera: ganti URL / IP ----------
+def _cctv(env):
+    owner = env.user("pemilik")
+    src = env.source(owner, env.environment(), "HP 1")
+    return owner, src
+
+
+def test_ganti_url_diuji_dulu_lalu_disimpan(env, monkeypatch):
+    owner, src = _cctv(env)
+    probed = []
+    monkeypatch.setattr(vs_api, "probe_stream", lambda url, timeout: (probed.append(url), (True, None))[1])
+    new = "rtsp://admin:baru@192.168.1.99:554/stream"
+    r = env.client.patch(f"/video-sources/{src.id}", json={"name": "HP 1 baru", "stream_url": new},
+                         headers=env.headers(owner))
+    assert r.status_code == 200, r.text
+    assert r.json()["stream_url"] == "rtsp://admin:***@192.168.1.99:554/stream"     # tetap disamarkan
+    assert r.json()["name"] == "HP 1 baru" and probed == [new]
+    env.db.refresh(src)
+    assert src.stream_url == new
+
+
+def test_url_tersamar_dikirim_ulang_dianggap_tidak_berubah(env, monkeypatch):
+    owner, src = _cctv(env)
+    monkeypatch.setattr(vs_api, "probe_stream", lambda *a, **k: pytest.fail("tidak boleh diuji ulang"))
+    r = env.client.patch(f"/video-sources/{src.id}",
+                         json={"name": "Ganti nama saja", "stream_url": "rtsp://admin:***@192.168.1.10:554/stream"},
+                         headers=env.headers(owner))
+    assert r.status_code == 200, r.text
+    env.db.refresh(src)
+    assert src.stream_url == URL and src.name == "Ganti nama saja"
+
+
+def test_ganti_ip_dengan_password_tersamar_memakai_password_lama(env, monkeypatch):
+    owner, src = _cctv(env)
+    monkeypatch.setattr(vs_api, "probe_stream", lambda url, timeout: (True, None))
+    r = env.client.patch(f"/video-sources/{src.id}",
+                         json={"stream_url": "rtsp://admin:***@10.0.0.7:554/stream"}, headers=env.headers(owner))
+    assert r.status_code == 200, r.text
+    env.db.refresh(src)
+    assert src.stream_url == "rtsp://admin:rahasia@10.0.0.7:554/stream"
+
+
+def test_password_tersamar_dengan_username_lain_ditolak(env, monkeypatch):
+    owner, src = _cctv(env)
+    monkeypatch.setattr(vs_api, "probe_stream", lambda *a, **k: pytest.fail("tidak boleh diuji"))
+    r = env.client.patch(f"/video-sources/{src.id}",
+                         json={"stream_url": "rtsp://operator:***@10.0.0.7/stream"}, headers=env.headers(owner))
+    assert r.status_code == 422 and "Ketik ulang" in r.json()["detail"]
+
+
+def test_url_baru_tidak_bisa_dihubungi_tidak_disimpan(env, monkeypatch):
+    owner, src = _cctv(env)
+    monkeypatch.setattr(vs_api, "probe_stream", lambda url, timeout: (False, "stream tidak bisa dibuka"))
+    r = env.client.patch(f"/video-sources/{src.id}", json={"stream_url": "http://10.0.0.8:4747/video"},
+                         headers=env.headers(owner))
+    assert r.status_code == 422
+    env.db.refresh(src)
+    assert src.stream_url == URL
+
+
+@pytest.mark.parametrize("bad", ["file:///etc/passwd", "/dev/video0", "ftp://x/y"])
+def test_ganti_url_berbahaya_ditolak(env, bad, monkeypatch):
+    owner, src = _cctv(env)
+    monkeypatch.setattr(vs_api, "probe_stream", lambda *a, **k: pytest.fail("tidak boleh diuji"))
+    r = env.client.patch(f"/video-sources/{src.id}", json={"stream_url": bad}, headers=env.headers(owner))
+    assert r.status_code == 422
+
+
+def test_url_sumber_unggahan_tidak_bisa_diubah(env):
+    owner = env.user("pemilik")
+    src = env.source(owner, env.environment(), "Video", source_type="video_upload", status="uploaded")
+    r = env.client.patch(f"/video-sources/{src.id}", json={"stream_url": "http://10.0.0.8/v"},
+                         headers=env.headers(owner))
+    assert r.status_code == 422
+
+
+def test_ganti_url_saat_analisis_berjalan_pindah_tanpa_stop(env, monkeypatch):
+    owner, src = _cctv(env)
+    sess = env.session(src, "processing")
+    monkeypatch.setattr(vs_api, "probe_stream", lambda url, timeout: (True, None))
+    calls = []
+    monkeypatch.setattr(vs_api.stream_manager, "restart", lambda sid, url, fps=None: calls.append((sid, url)) or True)
+    new = "http://10.0.0.9:4747/video"
+    r = env.client.patch(f"/video-sources/{src.id}", json={"stream_url": new}, headers=env.headers(owner))
+    assert r.status_code == 200, r.text
+    assert calls == [(str(sess.id), new)]
+    env.db.refresh(sess)
+    assert sess.status == "processing"
+
+
+def test_ganti_nama_saja_tidak_restart_stream(env, monkeypatch):
+    owner, src = _cctv(env)
+    env.session(src, "processing")
+    monkeypatch.setattr(vs_api.stream_manager, "restart", lambda *a, **k: pytest.fail("tidak boleh restart"))
+    r = env.client.patch(f"/video-sources/{src.id}", json={"name": "Nama baru"}, headers=env.headers(owner))
+    assert r.status_code == 200
