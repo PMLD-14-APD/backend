@@ -66,9 +66,9 @@ services:
       be:
         condition: service_healthy
 
-  # Aktifkan setelah punya token dari Cloudflare Zero Trust:
-  #   CF_TUNNEL_TOKEN=... docker compose --profile tunnel up -d
-  # Di dashboard Cloudflare, arahkan public hostname ke http://127.0.0.1:${FE_PORT}.
+  # Aktifkan setelah punya token dari Cloudflare Zero Trust: isi CF_TUNNEL_TOKEN dan
+  # COMPOSE_PROFILES=tunnel di deploy/.env, lalu `docker compose up -d`.
+  # Di dashboard Cloudflare, arahkan public hostname ke http://127.0.0.1:<FE_PORT>.
   cloudflared:
     image: cloudflare/cloudflared:2025.11.1
     profiles: [tunnel]
