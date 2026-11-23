@@ -9,7 +9,7 @@ from datetime import date, datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, literal
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -56,6 +56,14 @@ def _search(query, search: Optional[str]):
         like = f"%{escape_like(search.strip())}%"
         query = query.filter(VideoSource.name.ilike(like, escape="\\") | Location.name.ilike(like, escape="\\"))
     return query
+
+
+def _normalize_violation_type(value: Optional[str]) -> Optional[str]:
+    """'helmet' / 'no_helmet' / ' NO_HELMET ' -> 'NO_HELMET'. Kosong -> None (filter tidak dipakai)."""
+    if value is None or not value.strip():
+        return None
+    token = value.strip().upper()
+    return token if token.startswith("NO_") else f"NO_{token}"
 
 
 # ---------------------------------------------------------------- riwayat sesi analisis
@@ -172,6 +180,11 @@ def violation_history(
     session_id: Optional[uuid.UUID] = None,
     compliance_status: Optional[ComplianceStatus] = None,
     apd_class_id: Optional[uuid.UUID] = Query(None, description="Hanya pelanggaran yang APD ini tidak terpakai"),
+    violation_type: Optional[str] = Query(
+        None,
+        description="Filter catatan pelanggaran, mis. NO_HELMET (atau cukup 'helmet'). Pelanggaran gabungan "
+                    "seperti 'NO_HELMET,NO_VEST' ikut tersaring.",
+    ),
     search: Optional[str] = Query(None, description="Cari nama sumber atau nama lokasi"),
     rng: tuple = Depends(date_range),
     sort_order: SortOrder = "desc",
@@ -195,6 +208,14 @@ def violation_history(
         query = query.filter(DetectionLog.items.any(
             (DetectionLogItem.apd_class_id == apd_class_id) & DetectionLogItem.is_present.is_(False)
         ))
+    vtype = _normalize_violation_type(violation_type)
+    if vtype:
+        # violation_type disimpan sebagai daftar dipisah koma ('NO_HELMET,NO_VEST'): cocokkan per token
+        # supaya 'NO_HELMET' tidak ikut menangkap 'NO_HELMET_STRAP'
+        like = f"%,{escape_like(vtype)},%"
+        query = query.filter(
+            (literal(",") + DetectionLog.violation_type + literal(",")).like(like, escape="\\")
+        )
     if start:
         query = query.filter(DetectionLog.detected_at >= start)
     if end:

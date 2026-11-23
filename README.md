@@ -203,6 +203,7 @@ Semua endpoint selain `register`, `login`, `/` dan `/health` membutuhkan header
 | GET | `/detection-logs/{id}/image` | Foto bukti (JPEG). Header `Authorization`, atau `?token=` untuk tag `<img>` |
 | GET | `/dashboard/summary` · `/trend` · `/violations` · `/breakdown` · `/recent-violations` · `/active-sessions` | Data dashboard |
 | GET | `/history/sessions` · `/history/violations` · `/history/violations/{id}` | Riwayat analisis |
+| GET | `/history/violations` | Filter: `source_id`, `location_id`, `session_id`, `compliance_status`, `apd_class_id`, `violation_type` (catatan pelanggaran, mis. `NO_HELMET` atau `helmet`; pelanggaran gabungan ikut tersaring), `search` (nama kamera/lokasi), `date_from`, `date_to`, `sort_order`, `limit`, `offset` |
 
 ## Keamanan
 
