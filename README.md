@@ -75,6 +75,30 @@ uvicorn app.main:app --reload
 > **Jalankan dengan satu worker uvicorn** (jangan pakai `--workers N`). Manajer inferensi, manajer stream,
 > dan daftar token logout disimpan di memori proses.
 
+## Deploy dengan Docker (produksi, 1 PC ber-GPU)
+
+Folder `deploy/` menjalankan **DB (Postgres 16) + BE (GPU) + FE** sekaligus. Letakkan repo frontend
+sejajar dengan repo ini (`<root>/BE_V2` dan `<root>/FE`).
+
+Prasyarat: Docker + Compose, driver NVIDIA + `nvidia-container-toolkit`, bobot model di `storage/models/`.
+
+```bash
+cd deploy
+cp .env.example .env          # isi POSTGRES_PASSWORD (acak) dan port
+docker compose up -d --build  # nyalakan (auto-start lagi setelah reboot)
+docker compose ps             # status
+docker compose logs -f be     # log backend
+docker compose down           # matikan  (JANGAN pakai -v: menghapus database)
+```
+
+- Semua service hanya listen di `127.0.0.1`; yang dibuka ke publik hanya FE lewat Cloudflare Tunnel
+  (`CF_TUNNEL_TOKEN=... docker compose --profile tunnel up -d`).
+- `DATABASE_URL` untuk container diatur oleh compose (DB container), bukan dari `../.env`.
+- Uvicorn wajib **1 worker** (inferensi berjalan sebagai thread di proses API).
+- Backup harian: `deploy/backup.sh` (pasang di crontab).
+- Kamera HP: DroidCam (`http://<ip-hp>:4747/video`) didaftarkan sebagai sumber CCTV. Versi gratis hanya
+  melayani satu penonton, jadi jangan buka stream-nya di browser saat sedang dianalisis.
+
 ## Konfigurasi (`.env`)
 
 | Variabel | Default | Keterangan |

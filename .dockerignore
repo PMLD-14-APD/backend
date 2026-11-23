@@ -1,7 +1,8 @@
 .git
-.env
-.env.*
+**/.env
+**/.env.*
 !.env.example
+deploy
 storage
 **/__pycache__
 .pytest_cache
